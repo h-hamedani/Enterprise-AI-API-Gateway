@@ -1,0 +1,2821 @@
+openapi: 3.1.0
+info:
+  title: Enterprise AI & API Gateway
+  version: 1.2.0
+  summary: Final executable HTTP contract for Enterprise AI & API Gateway V1
+  description: Derived from PRD V1.4, HLD V1.1 corrections, ERD V1.2 Final, Physical DB/Alembic V1.2 Final, API Specification
+    V1.2.2 Final, and frozen M0-M9 execution contracts. This artifact consolidates final V1 semantics for Normal API, OpenAI-compatible
+    LLM, Admin browser sessions, traffic-admission health, idempotency, certification, credential invalidation, SSRF/TLS and
+    SSE.
+servers:
+- url: https://gateway.example.com
+  description: Production example
+security: []
+tags:
+- name: Health
+- name: LLM Data Plane
+- name: Applications
+- name: API Keys
+- name: Services
+- name: Routes
+- name: LLM Registry
+- name: Rate Limits
+- name: Pricing
+- name: Audit
+- name: Configuration
+- name: Admin Session
+paths:
+  /health/live:
+    get:
+      tags:
+      - Health
+      operationId: getLiveness
+      summary: Liveness probe
+      security: []
+      responses:
+        '200':
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+      description: Process/event-loop liveness only; no PostgreSQL, Redis, provider or upstream dependency calls.
+  /health/ready:
+    get:
+      tags:
+      - Health
+      operationId: getReadiness
+      summary: Dependency readiness diagnostic
+      security: []
+      responses:
+        '200':
+          description: Instance is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+      description: PostgreSQL SELECT 1 + Redis PING concurrently, each with 1s bound. Diagnostic/alerting endpoint; not the
+        orchestrator traffic-membership probe.
+  /v1/models:
+    get:
+      tags:
+      - LLM Data Plane
+      operationId: listModels
+      summary: List aliases/models invokable by the current API key
+      security:
+      - GatewayApiKey: []
+      responses:
+        '200':
+          description: OpenAI-compatible model list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /v1/chat/completions:
+    post:
+      tags:
+      - LLM Data Plane
+      operationId: createChatCompletion
+      summary: Create an OpenAI-compatible chat completion
+      security:
+      - GatewayApiKey: []
+      parameters:
+      - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatCompletionRequest'
+      responses:
+        '200':
+          description: 'stream=false => JSON ChatCompletionResponse. stream=true => real SSE. Semantic output commits only
+            after first non-empty assistant content delta or meaningful tool-call delta is successfully written. Role-only,
+            usage-only, empty delta and Gateway heartbeat do not commit. Success emits exactly one data: [DONE]. After output
+            commit retry/fallback is forbidden; writable post-commit failures emit event:error then close with no [DONE].
+            Default provider idle timeouts: 20s pre-output, 60s post-output; default total pre-output retry/fallback budget:
+            30s.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatCompletionResponse'
+            text/event-stream:
+              schema:
+                type: string
+                description: OpenAI-compatible SSE stream.
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/ProviderError'
+        '503':
+          $ref: '#/components/responses/AllTargetsUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/admin/applications:
+    get:
+      tags:
+      - Applications
+      operationId: listApplications
+      summary: List applications
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Application page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplicationPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags:
+      - Applications
+      operationId: createApplication
+      summary: Create application
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/OptionalIdempotencyKey'
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplicationCreate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Application'
+        '409':
+          $ref: '#/components/responses/ResourceConflict'
+      description: When authenticated by AdminSessionCookie, X-CSRF-Token is mandatory. Supplying both AdminToken and AdminSessionCookie
+        is rejected as ambiguous credentials.
+  /api/v1/admin/applications/{application_id}:
+    parameters:
+    - $ref: '#/components/parameters/ApplicationId'
+    get:
+      tags:
+      - Applications
+      operationId: getApplication
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      responses:
+        '200':
+          description: Application
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Application'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+      - Applications
+      operationId: updateApplication
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplicationPatch'
+      responses:
+        '200':
+          description: Updated application
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Application'
+        '409':
+          $ref: '#/components/responses/ResourceConflict'
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      description: Updates application metadata/status. Committed DISABLED status makes all owned gw_ credentials unauthorized
+        within <=5 seconds. Session-authenticated mutation requires X-CSRF-Token.
+  /api/v1/admin/api-keys:
+    get:
+      tags:
+      - API Keys
+      operationId: listApiKeys
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      responses:
+        '200':
+          description: API key metadata page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyPage'
+    post:
+      tags:
+      - API Keys
+      operationId: createApiKey
+      summary: Create API key; raw secret is shown once
+      description: 'Idempotency-Key is mandatory.
+
+
+        When authenticated by AdminSessionCookie, X-CSRF-Token is mandatory. Supplying both AdminToken and AdminSessionCookie
+        is rejected as ambiguous credentials.'
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/RequiredIdempotencyKey'
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApiKeyCreate'
+      responses:
+        '201':
+          description: Raw gw_ key is returned only in this response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyCreated'
+        '409': &id001
+          description: Idempotency conflict or same operation currently IN_PROGRESS. Inspect normalized error.code. Retry-After
+            is present for idempotency_in_progress.
+          headers:
+            Retry-After:
+              description: Present for idempotency_in_progress; V1 value is 1 second. May be omitted for idempotency_conflict.
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/admin/api-keys/{api_key_id}/revoke:
+    post:
+      tags:
+      - API Keys
+      operationId: revokeApiKey
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/ApiKeyId'
+      - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: Revoked key metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyMetadata'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      description: Committed revoke becomes authorization-effective on the Data Plane within <=5 seconds via targeted invalidation
+        plus dedicated credential security-status revalidation. Session-authenticated mutation requires X-CSRF-Token.
+  /api/v1/admin/api-keys/{api_key_id}/permissions:
+    parameters:
+    - $ref: '#/components/parameters/ApiKeyId'
+    get:
+      tags:
+      - API Keys
+      operationId: listApiKeyPermissions
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      responses:
+        '200':
+          description: Permission list
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ApiKeyPermission'
+    put:
+      tags:
+      - API Keys
+      operationId: replaceApiKeyPermissions
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - permissions
+              additionalProperties: false
+              properties:
+                permissions:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/ApiKeyPermissionWrite'
+      responses:
+        '200':
+          description: Permission set replaced atomically
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      description: When authenticated by AdminSessionCookie, X-CSRF-Token is mandatory. Supplying both AdminToken and AdminSessionCookie
+        is rejected as ambiguous credentials.
+  /api/v1/admin/services:
+    get:
+      tags:
+      - Services
+      operationId: listServices
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      responses:
+        '200':
+          description: Service list
+    post:
+      tags:
+      - Services
+      operationId: createService
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/OptionalIdempotencyKey'
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceCreate'
+      responses:
+        '201':
+          description: Service created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Service'
+        '409':
+          $ref: '#/components/responses/ResourceConflict'
+      description: When authenticated by AdminSessionCookie, X-CSRF-Token is mandatory. Supplying both AdminToken and AdminSessionCookie
+        is rejected as ambiguous credentials.
+  /api/v1/admin/services/{service_id}:
+    parameters:
+    - $ref: '#/components/parameters/ServiceId'
+    get:
+      tags:
+      - Services
+      operationId: getService
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      responses:
+        '200':
+          description: Service
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Service'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+      - Services
+      operationId: updateService
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServicePatch'
+      responses:
+        '200':
+          description: Updated service
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Service'
+        '409':
+          $ref: '#/components/responses/ResourceConflict'
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      description: When authenticated by AdminSessionCookie, X-CSRF-Token is mandatory. Supplying both AdminToken and AdminSessionCookie
+        is rejected as ambiguous credentials.
+  /api/v1/admin/services/{service_id}/credential:
+    put:
+      tags:
+      - Services
+      operationId: rotateServiceCredential
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/ServiceId'
+      - $ref: '#/components/parameters/OptionalIdempotencyKey'
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceCredentialWrite'
+      responses:
+        '200':
+          description: Credential metadata; secret never returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CredentialMetadata'
+        '409':
+          $ref: '#/components/responses/ActiveCredentialConflict'
+      description: When authenticated by AdminSessionCookie, X-CSRF-Token is mandatory. Supplying both AdminToken and AdminSessionCookie
+        is rejected as ambiguous credentials.
+  /api/v1/admin/routes:
+    get:
+      tags:
+      - Routes
+      operationId: listRoutes
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      responses:
+        '200':
+          description: Route list
+    post:
+      tags:
+      - Routes
+      operationId: createRoute
+      summary: Create route after deterministic overlap validation
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RouteCreate'
+      responses:
+        '201':
+          description: Route created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Route'
+        '409':
+          $ref: '#/components/responses/RouteConflict'
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      description: When authenticated by AdminSessionCookie, X-CSRF-Token is mandatory. Supplying both AdminToken and AdminSessionCookie
+        is rejected as ambiguous credentials.
+  /api/v1/admin/routes/{route_id}:
+    parameters:
+    - $ref: '#/components/parameters/RouteId'
+    get:
+      tags:
+      - Routes
+      operationId: getRoute
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      responses:
+        '200':
+          description: Route
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Route'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+      - Routes
+      operationId: updateRoute
+      summary: Update/enable/disable route after overlap validation
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoutePatch'
+      responses:
+        '200':
+          description: Updated route
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Route'
+        '409':
+          $ref: '#/components/responses/RouteConflict'
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      description: When authenticated by AdminSessionCookie, X-CSRF-Token is mandatory. Supplying both AdminToken and AdminSessionCookie
+        is rejected as ambiguous credentials.
+  /api/v1/admin/llm/providers:
+    get:
+      tags:
+      - LLM Registry
+      operationId: listLlmProviders
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      responses:
+        '200':
+          description: Provider list
+    post:
+      tags:
+      - LLM Registry
+      operationId: createLlmProvider
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LlmProviderCreate'
+      responses:
+        '201':
+          description: Provider created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LlmProvider'
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      description: When authenticated by AdminSessionCookie, X-CSRF-Token is mandatory. Supplying both AdminToken and AdminSessionCookie
+        is rejected as ambiguous credentials.
+  /api/v1/admin/llm/targets:
+    get:
+      tags:
+      - LLM Registry
+      operationId: listLlmTargets
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      responses:
+        '200':
+          description: Target list
+    post:
+      tags:
+      - LLM Registry
+      operationId: createLlmTarget
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LlmTargetCreate'
+      responses:
+        '201':
+          description: Target created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LlmTarget'
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      description: When authenticated by AdminSessionCookie, X-CSRF-Token is mandatory. Supplying both AdminToken and AdminSessionCookie
+        is rejected as ambiguous credentials.
+  /api/v1/admin/llm/targets/{target_id}/credential:
+    put:
+      tags:
+      - LLM Registry
+      operationId: rotateLlmTargetCredential
+      summary: Atomically rotate provider credential
+      description: 'Idempotency-Key is mandatory.
+
+
+        When authenticated by AdminSessionCookie, X-CSRF-Token is mandatory. Supplying both AdminToken and AdminSessionCookie
+        is rejected as ambiguous credentials.'
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/TargetId'
+      - $ref: '#/components/parameters/RequiredIdempotencyKey'
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderCredentialWrite'
+      responses:
+        '200':
+          description: Credential metadata only
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CredentialMetadata'
+        '409': *id001
+  /api/v1/admin/llm/models:
+    get:
+      tags:
+      - LLM Registry
+      operationId: listLlmModels
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      responses:
+        '200':
+          description: Model list
+    post:
+      tags:
+      - LLM Registry
+      operationId: createLlmModel
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LlmModelCreate'
+      responses:
+        '201':
+          description: Model created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LlmModel'
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      description: When authenticated by AdminSessionCookie, X-CSRF-Token is mandatory. Supplying both AdminToken and AdminSessionCookie
+        is rejected as ambiguous credentials.
+  /api/v1/admin/llm/models/{model_id}/capabilities:
+    put:
+      tags:
+      - LLM Registry
+      operationId: replaceModelCapabilities
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/ModelId'
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - capabilities
+              additionalProperties: false
+              properties:
+                capabilities:
+                  type: array
+                  uniqueItems: true
+                  items:
+                    $ref: '#/components/schemas/ModelCapability'
+      responses:
+        '200':
+          description: Capability set replaced
+      description: When authenticated by AdminSessionCookie, X-CSRF-Token is mandatory. Supplying both AdminToken and AdminSessionCookie
+        is rejected as ambiguous credentials.
+  /api/v1/admin/llm/aliases:
+    get:
+      tags:
+      - LLM Registry
+      operationId: listLlmAliases
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      responses:
+        '200':
+          description: Alias list
+    post:
+      tags:
+      - LLM Registry
+      operationId: createLlmAlias
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LlmAliasCreate'
+      responses:
+        '201':
+          description: Alias created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LlmAlias'
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      description: When authenticated by AdminSessionCookie, X-CSRF-Token is mandatory. Supplying both AdminToken and AdminSessionCookie
+        is rejected as ambiguous credentials.
+  /api/v1/admin/llm/aliases/{alias_id}/targets:
+    put:
+      tags:
+      - LLM Registry
+      operationId: replaceAliasTargets
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/AliasId'
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - targets
+              additionalProperties: false
+              properties:
+                targets:
+                  type: array
+                  minItems: 1
+                  items:
+                    $ref: '#/components/schemas/AliasTargetWrite'
+      responses:
+        '200':
+          description: Ordered target set replaced atomically
+        '409':
+          $ref: '#/components/responses/ResourceConflict'
+      description: When authenticated by AdminSessionCookie, X-CSRF-Token is mandatory. Supplying both AdminToken and AdminSessionCookie
+        is rejected as ambiguous credentials.
+  /api/v1/admin/rate-limits/{scope_type}/{scope_id}:
+    parameters:
+    - $ref: '#/components/parameters/RateScopeType'
+    - $ref: '#/components/parameters/ScopeId'
+    get:
+      tags:
+      - Rate Limits
+      operationId: getRateLimitPolicy
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      responses:
+        '200':
+          description: Enabled policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateLimitPolicy'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      description: '`ADMIN_TOKEN` scope is post-auth per-specific-Admin-Token throttling only. It does not configure the separate
+        pre-auth `ADMIN_AUTH_PROTECTED` IP + Admin-auth-path-class brute-force guard.'
+    put:
+      tags:
+      - Rate Limits
+      operationId: upsertRateLimitPolicy
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RateLimitPolicyWrite'
+      responses:
+        '200':
+          description: Policy upserted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateLimitPolicy'
+        '409':
+          $ref: '#/components/responses/ResourceConflict'
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      description: 'When authenticated by AdminSessionCookie, X-CSRF-Token is mandatory. Supplying both AdminToken and AdminSessionCookie
+        is rejected as ambiguous credentials.
+
+
+        `ADMIN_TOKEN` scope is post-auth per-specific-Admin-Token throttling only. It does not configure the separate pre-auth
+        `ADMIN_AUTH_PROTECTED` IP + Admin-auth-path-class brute-force guard.'
+    delete:
+      tags:
+      - Rate Limits
+      operationId: deleteRateLimitPolicy
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      responses:
+        '204':
+          description: Policy disabled/removed
+        '404':
+          $ref: '#/components/responses/NotFound'
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      description: 'When authenticated by AdminSessionCookie, X-CSRF-Token is mandatory. Supplying both AdminToken and AdminSessionCookie
+        is rejected as ambiguous credentials.
+
+
+        `ADMIN_TOKEN` scope is post-auth per-specific-Admin-Token throttling only. It does not configure the separate pre-auth
+        `ADMIN_AUTH_PROTECTED` IP + Admin-auth-path-class brute-force guard.'
+  /api/v1/admin/llm/models/{model_id}/prices:
+    parameters:
+    - $ref: '#/components/parameters/ModelId'
+    get:
+      tags:
+      - Pricing
+      operationId: listModelPrices
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      responses:
+        '200':
+          description: Price windows
+    post:
+      tags:
+      - Pricing
+      operationId: createModelPrice
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModelPriceWrite'
+      responses:
+        '201':
+          description: Price window created
+        '409':
+          $ref: '#/components/responses/PriceWindowConflict'
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      description: When authenticated by AdminSessionCookie, X-CSRF-Token is mandatory. Supplying both AdminToken and AdminSessionCookie
+        is rejected as ambiguous credentials.
+  /api/v1/admin/audit-logs:
+    get:
+      tags:
+      - Audit
+      operationId: listAuditLogs
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Audit page; secrets are never returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditPage'
+      description: Stable pagination order is created_at DESC, id DESC. Cursor is opaque.
+  /api/v1/admin/health:
+    get:
+      tags:
+      - Configuration
+      operationId: getAdminHealth
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      responses:
+        '200':
+          description: Detailed component health and degraded-mode visibility
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminHealthResponse'
+  /api/v1/admin/config-version:
+    get:
+      tags:
+      - Configuration
+      operationId: getConfigVersion
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      responses:
+        '200':
+          description: Current tenant config version
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - config_version
+                properties:
+                  config_version:
+                    type: integer
+                    minimum: 0
+  /api/v1/admin/llm/providers/{provider_id}:
+    parameters:
+    - $ref: '#/components/parameters/ProviderId'
+    get:
+      tags:
+      - LLM Providers
+      summary: Get LLM provider
+      operationId: getLlmProvider
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      responses:
+        '200':
+          description: Provider
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LlmProvider'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+      - LLM Providers
+      summary: Update or disable LLM provider
+      operationId: updateLlmProvider
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LlmProviderPatch'
+      responses:
+        '200':
+          description: Updated provider
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LlmProvider'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/ResourceConflict'
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      description: When authenticated by AdminSessionCookie, X-CSRF-Token is mandatory. Supplying both AdminToken and AdminSessionCookie
+        is rejected as ambiguous credentials.
+  /api/v1/admin/llm/models/{model_id}:
+    parameters:
+    - $ref: '#/components/parameters/ModelId'
+    get:
+      tags:
+      - LLM Models
+      summary: Get LLM model
+      operationId: getLlmModel
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      responses:
+        '200':
+          description: Model
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LlmModel'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+      - LLM Models
+      summary: Update LLM model status or mutable metadata
+      operationId: updateLlmModel
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LlmModelPatch'
+      responses:
+        '200':
+          description: Updated model
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LlmModel'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/ResourceConflict'
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      description: When authenticated by AdminSessionCookie, X-CSRF-Token is mandatory. Supplying both AdminToken and AdminSessionCookie
+        is rejected as ambiguous credentials.
+  /api/v1/admin/llm/aliases/{alias_id}:
+    parameters:
+    - $ref: '#/components/parameters/AliasId'
+    get:
+      tags:
+      - LLM Aliases
+      summary: Get LLM alias
+      operationId: getLlmAlias
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      responses:
+        '200':
+          description: Alias
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LlmAlias'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+      - LLM Aliases
+      summary: Update or disable LLM alias
+      operationId: updateLlmAlias
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LlmAliasPatch'
+      responses:
+        '200':
+          description: Updated alias
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LlmAlias'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/ResourceConflict'
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      description: When authenticated by AdminSessionCookie, X-CSRF-Token is mandatory. Supplying both AdminToken and AdminSessionCookie
+        is rejected as ambiguous credentials.
+  /health/traffic:
+    get:
+      tags:
+      - Health
+      operationId: getTrafficAdmission
+      summary: Traffic-admission probe
+      description: Infrastructure readiness/load-balancer membership probe. Redis degradation alone remains accepting while
+        conservative protection is functional.
+      security: []
+      responses:
+        '200':
+          description: Instance may receive new Data Plane traffic
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Instance is draining or unsafe for new Data Plane traffic
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /api/v1/admin/llm/targets/{target_id}:
+    parameters:
+    - $ref: '#/components/parameters/TargetId'
+    get:
+      tags:
+      - LLM Registry
+      operationId: getLlmTarget
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      responses:
+        '200':
+          description: Provider target metadata including certification and Experimental override; no credential plaintext.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LlmTarget'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+      - LLM Registry
+      operationId: updateLlmTarget
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      description: Updates mutable target fields. When session-authenticated, X-CSRF-Token is mandatory. Certification result
+        fields and credentials cannot be arbitrarily set here.
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LlmTargetPatch'
+      responses:
+        '200':
+          description: Updated target
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LlmTarget'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/ResourceConflict'
+  /api/v1/admin/session/login:
+    post:
+      tags:
+      - Admin Session
+      operationId: loginAdminSession
+      security: []
+      description: Pre-auth ADMIN_AUTH_PROTECTED guard applies. Exchanges an already-issued adm_ token for a fresh opaque
+        Redis-backed browser session. No Admin Token lifecycle is created.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminSessionLoginRequest'
+      responses:
+        '204':
+          description: Session created; raw adm_ is not echoed. Client should call GET /api/v1/admin/session for safe bootstrap
+            metadata.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+              description: gw_admin_session opaque cookie; HttpOnly; Secure in production; SameSite=Strict; host-only; Path=/api/v1/admin.
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/admin/session:
+    get:
+      tags:
+      - Admin Session
+      operationId: getAdminSession
+      security:
+      - AdminSessionCookie: []
+      responses:
+        '200':
+          description: Safe current Admin/session bootstrap metadata; no raw credentials.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminSessionInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/admin/session/logout:
+    post:
+      tags:
+      - Admin Session
+      operationId: logoutAdminSession
+      security:
+      - AdminSessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      description: Requires browser session + matching X-CSRF-Token. Invalidates Redis session and expires cookie.
+      responses:
+        '204':
+          description: Session invalidated
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+              description: Expires gw_admin_session cookie.
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/admin/model-prices/{price_id}:
+    parameters:
+    - $ref: '#/components/parameters/PriceId'
+    patch:
+      tags:
+      - Pricing
+      operationId: updateModelPrice
+      security:
+      - AdminToken: []
+      - AdminSessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      description: Adjust future/open price window subject to no-overlap exclusion constraint. Session-authenticated mutation
+        requires X-CSRF-Token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModelPricePatch'
+      responses:
+        '200':
+          description: Updated price window
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelPrice'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/PriceWindowConflict'
+components:
+  securitySchemes:
+    GatewayApiKey:
+      type: http
+      scheme: bearer
+      bearerFormat: gw_<secret>
+      description: Data Plane credential only.
+    AdminToken:
+      type: http
+      scheme: bearer
+      bearerFormat: adm_<secret>
+      description: Per-admin Control Plane credential only.
+    AdminSessionCookie:
+      type: apiKey
+      in: cookie
+      name: gw_admin_session
+      description: Opaque Redis-backed Admin browser session cookie. Fail-closed when session store is unavailable.
+  parameters:
+    RequestId:
+      name: X-Request-ID
+      in: header
+      required: false
+      description: Optional client correlation value only. Gateway always generates and returns a canonical UUID v7 X-Request-ID.
+      schema:
+        type: string
+        maxLength: 128
+    RequiredIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: 'Required. Same key + same canonical fingerprint replays the original committed outcome for 24h. Different
+        fingerprint => 409 idempotency_conflict. Concurrent IN_PROGRESS => 409 idempotency_in_progress with Retry-After: 1.'
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+    OptionalIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque server-generated cursor
+      schema:
+        type: string
+    ApplicationId:
+      name: application_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ApiKeyId:
+      name: api_key_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ServiceId:
+      name: service_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    RouteId:
+      name: route_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TargetId:
+      name: target_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ModelId:
+      name: model_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AliasId:
+      name: alias_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ScopeId:
+      name: scope_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    RateScopeType:
+      name: scope_type
+      in: path
+      required: true
+      schema:
+        type: string
+        enum:
+        - API_KEY
+        - ROUTE
+        - SERVICE
+        - LLM_ALIAS
+        - LLM_MODEL
+        - PROVIDER_TARGET
+        - ADMIN_TOKEN
+    ProviderId:
+      name: provider_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    CsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: false
+      description: Required only when the operation is authenticated with AdminSessionCookie and the HTTP method is state-changing.
+        Not required for direct Bearer adm_ authentication.
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 512
+    PriceId:
+      name: price_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    Unauthorized:
+      $ref: '#/components/responses/_Unauthorized'
+    _Unauthorized:
+      description: Authentication failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Authorization failed or model not allowed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Not found; cross-tenant references also return 404
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InvalidRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RateLimited:
+      description: Gateway or provider rate limit
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+            minimum: 0
+        X-RateLimit-Limit:
+          schema:
+            type: integer
+            minimum: 0
+        X-RateLimit-Remaining:
+          schema:
+            type: integer
+            minimum: 0
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ServiceUnavailable:
+      description: Service unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    GatewayTimeout:
+      description: Provider/gateway timeout including stream idle timeout
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ProviderError:
+      description: Provider failure normalized by Gateway
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: Gateway internal error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ResourceConflict:
+      description: Resource/configuration conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RouteConflict:
+      description: Ambiguous ACTIVE route overlap
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ActiveCredentialConflict:
+      description: ACTIVE credential invariant conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    PriceWindowConflict:
+      description: Overlapping price validity window
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    IdempotencyConflict:
+      description: Same Idempotency-Key used with a different canonical payload
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    AllTargetsUnavailable:
+      description: All alias targets failed, were unavailable/open-circuit, or capability-ineligible
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            exhausted:
+              value:
+                error:
+                  message: No eligible LLM target is currently available.
+                  type: all_targets_unavailable
+                  param: null
+                  code: all_targets_unavailable
+                  metadata:
+                    attempted_targets: 2
+                    ineligible_targets: 1
+                    last_error_code: provider_timeout
+                request_id: req_123
+    RequestTooLarge:
+      description: Request body exceeds Gateway limit
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    UpstreamUnavailable:
+      description: Normal API upstream unavailable/circuit open before response commit
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    UpstreamTimeout:
+      description: Normal API upstream timeout before response commit
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    IdempotencyInProgress:
+      description: Same idempotency operation is currently IN_PROGRESS
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+            minimum: 1
+          description: Whole seconds; V1 returns 1.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - status
+      properties:
+        status:
+          type: string
+          enum:
+          - ok
+          - ready
+          - not_ready
+          - accepting
+          - draining
+        runtime_mode:
+          type:
+          - string
+          - 'null'
+          enum:
+          - NORMAL
+          - DEGRADED_REDIS
+          - RECOVERING_REDIS
+          - DRAINING
+          - NOT_READY_DB
+          - null
+          description: Present only where meaningful; never exposes dependency addresses/topology.
+    ErrorResponse:
+      type: object
+      required:
+      - error
+      - request_id
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required:
+          - message
+          - type
+          - code
+          additionalProperties: false
+          properties:
+            message:
+              type: string
+            type:
+              type: string
+              enum:
+              - authentication_error
+              - authorization_error
+              - rate_limit_exceeded
+              - invalid_request
+              - resource_not_found
+              - model_not_found
+              - model_not_allowed
+              - provider_timeout
+              - provider_rate_limit
+              - provider_unavailable
+              - provider_authentication_error
+              - provider_error
+              - all_targets_unavailable
+              - gateway_timeout
+              - gateway_internal_error
+              - resource_conflict
+              - route_conflict
+              - active_credential_conflict
+              - price_window_conflict
+              - idempotency_conflict
+              - configuration_conflict
+              - request_too_large
+              - upstream_unavailable
+              - upstream_timeout
+              - idempotency_in_progress
+            param:
+              type:
+              - string
+              - 'null'
+            code:
+              type: string
+            metadata:
+              type: object
+              additionalProperties: true
+              description: Safe aggregate diagnostics only; no provider IDs, base URLs, credentials, or topology.
+              properties:
+                attempted_targets:
+                  type: integer
+                  minimum: 0
+                ineligible_targets:
+                  type: integer
+                  minimum: 0
+                last_error_code:
+                  type:
+                  - string
+                  - 'null'
+        request_id:
+          type: string
+          format: uuid
+          description: Canonical Gateway-generated UUID v7.
+    ModelList:
+      type: object
+      required:
+      - object
+      - data
+      properties:
+        object:
+          type: string
+          const: list
+        data:
+          type: array
+          items:
+            type: object
+            required:
+            - id
+            - object
+            - owned_by
+            properties:
+              id:
+                type: string
+              object:
+                type: string
+                const: model
+              owned_by:
+                type: string
+                const: gateway
+    ToolDefinition:
+      type: object
+      required:
+      - type
+      - function
+      properties:
+        type:
+          type: string
+          const: function
+        function:
+          type: object
+          required:
+          - name
+          additionalProperties: false
+          properties:
+            name:
+              type: string
+            description:
+              type: string
+            parameters:
+              type: object
+      additionalProperties: false
+    ToolCall:
+      type: object
+      required:
+      - id
+      - type
+      - function
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          const: function
+        function:
+          type: object
+          required:
+          - name
+          - arguments
+          properties:
+            name:
+              type: string
+            arguments:
+              type: string
+          additionalProperties: false
+      additionalProperties: false
+    ChatMessage:
+      type: object
+      required:
+      - role
+      additionalProperties: false
+      properties:
+        role:
+          type: string
+          enum:
+          - system
+          - user
+          - assistant
+          - tool
+        content:
+          type:
+          - string
+          - 'null'
+          description: V1 canonical content is text-only; null permitted for assistant tool-call messages.
+        name:
+          type: string
+        tool_call_id:
+          type: string
+        tool_calls:
+          type: array
+          items:
+            $ref: '#/components/schemas/ToolCall'
+    ChatCompletionRequest:
+      type: object
+      required:
+      - model
+      - messages
+      additionalProperties: false
+      properties:
+        model:
+          type: string
+          minLength: 1
+          description: Tenant-visible alias or concrete public model identifier. Successful response model echoes this exact
+            value.
+        messages:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+        stream:
+          type: boolean
+          default: false
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+        top_p:
+          type: number
+          minimum: 0
+          maximum: 1
+        max_tokens:
+          type: integer
+          minimum: 1
+          description: Legacy-compatible output token limit where supported by frozen compatibility profile.
+        max_completion_tokens:
+          type: integer
+          minimum: 1
+          description: Canonical output token limit.
+        stop:
+          oneOf:
+          - type: string
+          - type: array
+            items:
+              type: string
+        tools:
+          type: array
+          items:
+            $ref: '#/components/schemas/ToolDefinition'
+        tool_choice: {}
+        user:
+          type: string
+          description: External correlation metadata only; never authentication/tenant identity.
+    Usage:
+      type: object
+      properties:
+        prompt_tokens:
+          type: integer
+          minimum: 0
+        completion_tokens:
+          type: integer
+          minimum: 0
+        total_tokens:
+          type: integer
+          minimum: 0
+    ChatCompletionResponse:
+      type: object
+      required:
+      - id
+      - object
+      - created
+      - model
+      - choices
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: chat.completion
+        created:
+          type: integer
+        model:
+          type: string
+          description: Exact public identifier supplied in request.model; never hidden provider model/deployment.
+        choices:
+          type: array
+          items:
+            type: object
+            required:
+            - index
+            - message
+            properties:
+              index:
+                type: integer
+                minimum: 0
+              message:
+                $ref: '#/components/schemas/ChatMessage'
+              finish_reason:
+                type:
+                - string
+                - 'null'
+                enum:
+                - stop
+                - length
+                - tool_calls
+                - content_filter
+                - function_call
+                - null
+        usage:
+          oneOf:
+          - $ref: '#/components/schemas/Usage'
+          - type: 'null'
+    Application:
+      type: object
+      required:
+      - id
+      - name
+      - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - DISABLED
+    ApplicationCreate:
+      type: object
+      required:
+      - name
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+    ApplicationPatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - DISABLED
+    ApplicationPage:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Application'
+        next_cursor:
+          type:
+          - string
+          - 'null'
+    ApiKeyCreate:
+      type: object
+      required:
+      - application_id
+      - name
+      additionalProperties: false
+      properties:
+        application_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        expires_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+    ApiKeyMetadata:
+      type: object
+      required:
+      - id
+      - name
+      - key_prefix
+      - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        key_prefix:
+          type: string
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - DISABLED
+          - REVOKED
+        expires_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+    ApiKeyCreated:
+      allOf:
+      - $ref: '#/components/schemas/ApiKeyMetadata'
+      - type: object
+        required:
+        - key
+        properties:
+          key:
+            type: string
+            pattern: ^gw_
+            description: Raw secret shown once
+    ApiKeyPage:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApiKeyMetadata'
+        next_cursor:
+          type:
+          - string
+          - 'null'
+    ApiKeyPermissionWrite:
+      type: object
+      required:
+      - resource_type
+      - resource_id
+      - action
+      additionalProperties: false
+      properties:
+        resource_type:
+          type: string
+          enum:
+          - SERVICE
+          - ROUTE
+          - LLM_ALIAS
+          - LLM_MODEL
+        resource_id:
+          type: string
+          format: uuid
+        action:
+          type: string
+          const: INVOKE
+    ApiKeyPermission:
+      allOf:
+      - $ref: '#/components/schemas/ApiKeyPermissionWrite'
+      - type: object
+        properties:
+          id:
+            type: string
+            format: uuid
+    Service:
+      type: object
+      required:
+      - id
+      - name
+      - base_url
+      - timeout_ms
+      - status
+      - slug
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        base_url:
+          type: string
+          format: uri
+        timeout_ms:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - DISABLED
+        slug: &id002
+          type: string
+          pattern: ^[a-z0-9][a-z0-9-]{0,62}$
+          maxLength: 63
+          description: Tenant-unique public routing slug. Immutable through normal PATCH; reserved Gateway namespaces rejected
+            by Control Plane.
+    ServiceCreate:
+      type: object
+      required:
+      - name
+      - base_url
+      - slug
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        base_url:
+          type: string
+          format: uri
+        timeout_ms:
+          type: integer
+          minimum: 1
+          default: 30000
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - DISABLED
+          default: ACTIVE
+        slug: *id002
+    ServicePatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        base_url:
+          type: string
+          format: uri
+        timeout_ms:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - DISABLED
+    ServiceCredentialWrite:
+      type: object
+      required:
+      - auth_type
+      additionalProperties: false
+      properties:
+        auth_type:
+          type: string
+          enum:
+          - NONE
+          - STATIC_BEARER
+          - STATIC_HEADER
+        secret:
+          type:
+          - string
+          - 'null'
+          writeOnly: true
+        header_name:
+          type:
+          - string
+          - 'null'
+    CredentialMetadata:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - DISABLED
+        secret_type:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        rotated_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+    RouteCreate:
+      type: object
+      required:
+      - service_id
+      - path_pattern
+      - methods
+      - priority
+      additionalProperties: false
+      properties:
+        service_id:
+          type: string
+          format: uuid
+        path_pattern:
+          type: string
+          minLength: 1
+        methods:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+            - GET
+            - POST
+            - PUT
+            - PATCH
+            - DELETE
+        priority:
+          type: integer
+        timeout_ms:
+          type:
+          - integer
+          - 'null'
+          minimum: 1
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - DISABLED
+          default: ACTIVE
+    RoutePatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        path_pattern:
+          type: string
+        methods:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+            - GET
+            - POST
+            - PUT
+            - PATCH
+            - DELETE
+        priority:
+          type: integer
+        timeout_ms:
+          type:
+          - integer
+          - 'null'
+          minimum: 1
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - DISABLED
+    Route:
+      allOf:
+      - $ref: '#/components/schemas/RouteCreate'
+      - type: object
+        properties:
+          id:
+            type: string
+            format: uuid
+    LlmProviderCreate:
+      type: object
+      required:
+      - name
+      - provider_type
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        provider_type:
+          type: string
+          enum:
+          - OPENAI
+          - ANTHROPIC
+          - VLLM
+          - GENERIC_OPENAI_COMPAT
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - DISABLED
+          default: ACTIVE
+    LlmProvider:
+      allOf:
+      - $ref: '#/components/schemas/LlmProviderCreate'
+      - type: object
+        properties:
+          id:
+            type: string
+            format: uuid
+    LlmTargetCreate:
+      type: object
+      required:
+      - provider_id
+      - name
+      - base_url
+      additionalProperties: false
+      properties:
+        provider_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        base_url:
+          type: string
+          format: uri
+        timeout_ms:
+          type: integer
+          minimum: 1
+          default: 30000
+        max_concurrent_requests:
+          type:
+          - integer
+          - 'null'
+          minimum: 1
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - DISABLED
+          default: ACTIVE
+        pre_output_idle_timeout_ms:
+          type: integer
+          minimum: 1000
+          default: 20000
+        pre_output_budget_ms:
+          type: integer
+          minimum: 1001
+          maximum: 120000
+          default: 30000
+          description: Must be greater than pre_output_idle_timeout_ms.
+        post_output_idle_timeout_ms:
+          type: integer
+          minimum: 1000
+          default: 60000
+        allow_uncertified_runtime:
+          type: boolean
+          default: false
+          description: Explicit Experimental runtime override. Non-CERTIFIED target remains ineligible unless true.
+    LlmTarget:
+      allOf:
+      - $ref: '#/components/schemas/LlmTargetCreate'
+      - type: object
+        required:
+        - id
+        - certification_status
+        - allow_uncertified_runtime
+        properties:
+          id:
+            type: string
+            format: uuid
+          certification_status:
+            type: string
+            enum:
+            - UNVERIFIED
+            - CERTIFIED
+            - FAILED
+          certified_at:
+            type:
+            - string
+            - 'null'
+            format: date-time
+          certification_metadata:
+            type:
+            - object
+            - 'null'
+            additionalProperties: true
+            description: Safe certification metadata/reference only; never credential/provider raw payload.
+    ProviderCredentialWrite:
+      type: object
+      required:
+      - secret
+      additionalProperties: false
+      properties:
+        secret:
+          type: string
+          writeOnly: true
+        secret_type:
+          type: string
+          default: API_KEY
+    ModelCapability:
+      type: string
+      enum:
+      - CHAT
+      - STREAMING
+      - TOOLS
+      - EMBEDDINGS
+    LlmModelCreate:
+      type: object
+      required:
+      - provider_target_id
+      - provider_model_name
+      additionalProperties: false
+      properties:
+        provider_target_id:
+          type: string
+          format: uuid
+        provider_model_name:
+          type: string
+        display_name:
+          type: string
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - DISABLED
+          default: ACTIVE
+    LlmModel:
+      allOf:
+      - $ref: '#/components/schemas/LlmModelCreate'
+      - type: object
+        properties:
+          id:
+            type: string
+            format: uuid
+          capabilities:
+            type: array
+            uniqueItems: true
+            items:
+              $ref: '#/components/schemas/ModelCapability'
+    AliasTargetWrite:
+      type: object
+      required:
+      - model_id
+      - priority
+      additionalProperties: false
+      properties:
+        model_id:
+          type: string
+          format: uuid
+        priority:
+          type: integer
+          minimum: 1
+    LlmAliasCreate:
+      type: object
+      required:
+      - name
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - DISABLED
+          default: ACTIVE
+    LlmAlias:
+      allOf:
+      - $ref: '#/components/schemas/LlmAliasCreate'
+      - type: object
+        properties:
+          id:
+            type: string
+            format: uuid
+          targets:
+            type: array
+            items:
+              $ref: '#/components/schemas/AliasTargetWrite'
+    RateLimitPolicyWrite:
+      type: object
+      additionalProperties: false
+      properties:
+        requests_per_window:
+          type:
+          - integer
+          - 'null'
+          minimum: 1
+        window_seconds:
+          type:
+          - integer
+          - 'null'
+          minimum: 1
+        max_concurrency:
+          type:
+          - integer
+          - 'null'
+          minimum: 1
+        degraded_factor:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 1
+          default: 0.25
+        enabled:
+          type: boolean
+          default: true
+      anyOf:
+      - required:
+        - requests_per_window
+        - window_seconds
+      - required:
+        - max_concurrency
+    RateLimitPolicy:
+      allOf:
+      - $ref: '#/components/schemas/RateLimitPolicyWrite'
+      - type: object
+        properties:
+          id:
+            type: string
+            format: uuid
+          scope_type:
+            type: string
+            enum:
+            - API_KEY
+            - ROUTE
+            - SERVICE
+            - LLM_ALIAS
+            - LLM_MODEL
+            - PROVIDER_TARGET
+            - ADMIN_TOKEN
+          scope_id:
+            type: string
+            format: uuid
+    ModelPriceWrite:
+      type: object
+      required:
+      - effective_from
+      additionalProperties: false
+      properties:
+        input_price_per_1m_tokens:
+          type:
+          - number
+          - 'null'
+          minimum: 0
+        output_price_per_1m_tokens:
+          type:
+          - number
+          - 'null'
+          minimum: 0
+        effective_from:
+          type: string
+          format: date-time
+        effective_to:
+          type:
+          - string
+          - 'null'
+          format: date-time
+    AuditPage:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              actor_admin_user_id:
+                type: string
+                format: uuid
+              actor_admin_token_id:
+                type: string
+                format: uuid
+              action:
+                type: string
+              resource_type:
+                type: string
+              resource_id:
+                type:
+                - string
+                - 'null'
+                format: uuid
+              request_id:
+                type: string
+              result:
+                type: string
+                enum:
+                - SUCCESS
+                - FAILED
+              created_at:
+                type: string
+                format: date-time
+        next_cursor:
+          type:
+          - string
+          - 'null'
+      description: Stable audit page ordered by created_at DESC, id DESC.
+    AdminHealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        degraded_mode:
+          type: boolean
+        dependencies:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status:
+                type: string
+              reason:
+                type:
+                - string
+                - 'null'
+    LlmProviderPatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - DISABLED
+    LlmModelPatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        display_name:
+          type:
+          - string
+          - 'null'
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - DISABLED
+      description: Mutable model metadata/status only. provider_target_id and provider_model_name remain immutable routing
+        identity fields in V1.
+    LlmAliasPatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - DISABLED
+    LlmTargetPatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+        timeout_ms:
+          type: integer
+          minimum: 1
+        pre_output_idle_timeout_ms:
+          type: integer
+          minimum: 1000
+        pre_output_budget_ms:
+          type: integer
+          minimum: 1001
+          maximum: 120000
+        post_output_idle_timeout_ms:
+          type: integer
+          minimum: 1000
+        max_concurrent_requests:
+          type:
+          - integer
+          - 'null'
+          minimum: 1
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - DISABLED
+        allow_uncertified_runtime:
+          type: boolean
+          description: Explicit audited Experimental runtime override.
+      description: Mutable target fields only. provider_id/base_url/credential and certification result fields are not set
+        here.
+    AdminSessionLoginRequest:
+      type: object
+      required:
+      - admin_token
+      additionalProperties: false
+      properties:
+        admin_token:
+          type: string
+          pattern: ^adm_
+          minLength: 5
+          writeOnly: true
+          description: Already-issued Admin Token. Resolves Admin User + Tenant; never echoed.
+    AdminSessionInfo:
+      type: object
+      required:
+      - admin_user_id
+      - tenant_id
+      - csrf_token
+      - idle_expires_at
+      - absolute_expires_at
+      additionalProperties: false
+      properties:
+        admin_user_id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        csrf_token:
+          type: string
+          minLength: 16
+          description: Session-bound CSRF token; keep in memory only.
+        idle_expires_at:
+          type: string
+          format: date-time
+        absolute_expires_at:
+          type: string
+          format: date-time
+    ModelPrice:
+      allOf:
+      - $ref: '#/components/schemas/ModelPriceWrite'
+      - type: object
+        required:
+        - id
+        - model_id
+        properties:
+          id:
+            type: string
+            format: uuid
+          model_id:
+            type: string
+            format: uuid
+    ModelPricePatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        input_price_per_1m_tokens:
+          type:
+          - number
+          - 'null'
+          minimum: 0
+        output_price_per_1m_tokens:
+          type:
+          - number
+          - 'null'
+          minimum: 0
+        effective_from:
+          type: string
+          format: date-time
+        effective_to:
+          type:
+          - string
+          - 'null'
+          format: date-time
+x-gateway:
+  normal-api-dynamic-proxy:
+    basePath: /api/{service}/{remaining_path}
+    serviceParameter: tenant-scoped immutable services.slug
+    methods:
+    - GET
+    - POST
+    - PUT
+    - PATCH
+    - DELETE
+    authentication: GatewayApiKey
+    defaultRequestBodyLimitBytes: 10485760
+    timeoutsMs:
+      connect: 5000
+      pool: 5000
+      write: 30000
+      readIdle: 60000
+      preResponseOverall: 120000
+    activeStreamAbsoluteTimeout: false
+    redirectsFollowed: false
+    rules:
+    - Preserve query multiplicity/order where transport permits; do not double-decode traversal.
+    - Strip hop-by-hop headers; rebuild Host; inject canonical UUID v7 X-Request-ID.
+    - Client gw_ Authorization is never forwarded; upstream credentials are injected after filtering.
+    - Configurable outbound target passes centralized SSRF/DNS/TLS validation.
+  llm-streaming:
+    successTerminator: 'data: [DONE]'
+    outputCommit: first successfully written non-empty assistant content delta or meaningful tool-call delta
+    nonCommitEvents:
+    - role-only
+    - usage-only
+    - empty delta
+    - gateway heartbeat
+    heartbeatComment: ': ping'
+    heartbeatIntervalSeconds: 15
+    postCommitFallbackAllowed: false
+    midStreamErrorEvent: error
+    midStreamDoneAfterError: false
+    preOutputIdleTimeoutMs: 20000
+    preOutputBudgetMs: 30000
+    preOutputBudgetMaxMs: 120000
+    postOutputIdleTimeoutMs: 60000
+    sameTargetMaxRetriesBeforeOutput: 1
+    retryDelayMs: 100
+  idempotency:
+    retentionHours: 24
+    correctnessStore: PostgreSQL
+    concurrentInProgress:
+      status: 409
+      code: idempotency_in_progress
+      retryAfterSeconds: 1
+    requiredOperations:
+    - createApiKey
+    - rotateLlmTargetCredential
+  credential-status:
+    adminMaxStalenessSeconds: 5
+    gatewayApiKeyAndApplicationMaxStalenessSeconds: 5
+    strictModeTtlSeconds: 0
+    generalConfigCacheMayAuthorizeRevokedCredential: false
+  health-probes:
+    liveness: /health/live
+    trafficAdmission: /health/traffic
+    dependencyReadiness: /health/ready
+  admin-auth-protection:
+    adminTokenRatePolicy: post-auth per resolved Admin Token
+    preAuthGuard: ADMIN_AUTH_PROTECTED keyed by client IP + shared Admin-auth path class
+    preAuthGuardConfigurableViaRateLimitApi: false
+  egress-security:
+    sharedBy:
+    - Normal API
+    - LLM provider targets
+    redirectsFollowed: false
+    productionTlsVerify: true
+    customCaSupported: true
+    denyOwnManagementListeners: true
+    denyMetadataIpv4LinkLocal: 169.254.0.0/16
+    knownNonLinkLocalMetadataDeny:
+    - 100.100.100.200
+    dnsRebindingProtection: true

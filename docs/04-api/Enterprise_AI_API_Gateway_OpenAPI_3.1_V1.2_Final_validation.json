@@ -1,0 +1,176 @@
+{
+  "artifact": "Enterprise_AI_API_Gateway_OpenAPI_3.1_V1.2_Final.yaml",
+  "source_contract": "Enterprise_AI_API_Gateway_API_Specification_V1.2.2_Final.docx",
+  "openapi": "3.1.0",
+  "result": "PASS",
+  "validation_method": {
+    "yaml_parse": "PyYAML safe_load",
+    "local_refs": "All local $ref targets resolved",
+    "structural": "Top-level keys, operation responses, Response Object keys, path parameters, unique operationIds",
+    "contract_invariants": "Final M2-M9 and reconciliation invariants",
+    "external_official_validator": "NOT RUN: no OpenAPI validator package installed and network unavailable"
+  },
+  "statistics": {
+    "paths": 35,
+    "schemas": 51,
+    "responses": 20,
+    "parameters": 17,
+    "security_schemes": 3,
+    "operations": 54,
+    "local_refs": 224
+  },
+  "checks": [
+    {
+      "check": "YAML parse",
+      "status": "PASS"
+    },
+    {
+      "check": "OpenAPI version is 3.1.0",
+      "status": "PASS"
+    },
+    {
+      "check": "Required top-level keys exist",
+      "status": "PASS"
+    },
+    {
+      "check": "info.version is 1.2.0",
+      "status": "PASS"
+    },
+    {
+      "check": "All local $ref values resolve",
+      "status": "PASS"
+    },
+    {
+      "check": "Every operation has responses",
+      "status": "PASS"
+    },
+    {
+      "check": "Response Objects use valid structural keys",
+      "status": "PASS"
+    },
+    {
+      "check": "operationId values are unique",
+      "status": "PASS"
+    },
+    {
+      "check": "All templated path parameters are declared",
+      "status": "PASS"
+    },
+    {
+      "check": "Health trio exists",
+      "status": "PASS"
+    },
+    {
+      "check": "/health/traffic has 200 and 503",
+      "status": "PASS"
+    },
+    {
+      "check": "Admin session transport trio exists",
+      "status": "PASS"
+    },
+    {
+      "check": "No Admin User/Token lifecycle HTTP endpoints",
+      "status": "PASS"
+    },
+    {
+      "check": "LLM target GET/PATCH exists",
+      "status": "PASS"
+    },
+    {
+      "check": "Model price PATCH exists",
+      "status": "PASS"
+    },
+    {
+      "check": "ADMIN_TOKEN rate scope exists",
+      "status": "PASS"
+    },
+    {
+      "check": "Service slug is required on create",
+      "status": "PASS"
+    },
+    {
+      "check": "Service slug cannot be patched",
+      "status": "PASS"
+    },
+    {
+      "check": "Chat request rejects unknown fields",
+      "status": "PASS"
+    },
+    {
+      "check": "Canonical message content is text-only/null",
+      "status": "PASS"
+    },
+    {
+      "check": "No developer role in V1 canonical messages",
+      "status": "PASS"
+    },
+    {
+      "check": "20/30/60 streaming defaults locked",
+      "status": "PASS"
+    },
+    {
+      "check": "Legacy stream_idle_timeout_ms absent",
+      "status": "PASS"
+    },
+    {
+      "check": "Target certification fields exposed",
+      "status": "PASS"
+    },
+    {
+      "check": "Experimental override is mutable",
+      "status": "PASS"
+    },
+    {
+      "check": "request_too_large present and payload_too_large absent",
+      "status": "PASS"
+    },
+    {
+      "check": "Normal upstream errors are defined",
+      "status": "PASS"
+    },
+    {
+      "check": "idempotency_in_progress is defined",
+      "status": "PASS"
+    },
+    {
+      "check": "API key creation requires Idempotency-Key",
+      "status": "PASS"
+    },
+    {
+      "check": "LLM credential rotation requires Idempotency-Key",
+      "status": "PASS"
+    },
+    {
+      "check": "Required idempotent operations use valid 409 Response Objects",
+      "status": "PASS"
+    },
+    {
+      "check": "AdminSessionCookie scheme exists",
+      "status": "PASS"
+    },
+    {
+      "check": "CSRF parameter exists",
+      "status": "PASS"
+    },
+    {
+      "check": "Credential revocation SLA is <=5s in runtime extension",
+      "status": "PASS"
+    },
+    {
+      "check": "Pre-auth brute-force guard is distinct from ADMIN_TOKEN policy",
+      "status": "PASS"
+    },
+    {
+      "check": "Traffic readiness probe is /health/traffic",
+      "status": "PASS"
+    },
+    {
+      "check": "DNS/metadata hardening includes 100.100.100.200",
+      "status": "PASS"
+    },
+    {
+      "check": "Global security remains empty",
+      "status": "PASS"
+    }
+  ]
+}
