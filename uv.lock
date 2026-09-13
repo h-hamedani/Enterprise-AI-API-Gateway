@@ -244,7 +244,7 @@ wheels = [
 [[package]]
 name = "enterprise-ai-api-gateway"
 version = "0.1.0"
-source = { editable = "." }
+source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
     { name = "fastapi" },
