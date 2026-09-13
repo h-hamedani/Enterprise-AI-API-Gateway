@@ -120,3 +120,13 @@ Implementation follows milestone execution packs M0 through M9.
 
 See `docs/`.
 
+
+
+## Local development on Windows
+
+Psycopg async requires a Selector-based event loop on Windows.
+
+Run:
+
+```powershell
+.\scripts\run-dev.ps1

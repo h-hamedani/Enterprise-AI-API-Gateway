@@ -46,6 +46,8 @@ docker-compose.override.yml
 # Release evidence generated locally
 release-evidence/*
 !release-evidence/.gitkeep
+!release-evidence/m0/
+!release-evidence/m0/**
 
 # Secrets / keys / certs
 *.pem
@@ -59,3 +61,4 @@ release-evidence/*
 *.db
 *.sqlite
 *.sqlite3
+gitleaks-report.json

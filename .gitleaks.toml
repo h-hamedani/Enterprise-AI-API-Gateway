@@ -1,0 +1,12 @@
+title = "Enterprise AI & API Gateway Gitleaks Configuration"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known safe non-source paths"
+paths = [
+  '''(^|/)\.venv/''',
+  '''(^|/)docs/''',
+  '''(^|/)release-evidence/'''
+]
