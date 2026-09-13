@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -10,6 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from app.api.health import router as health_router
 from app.core.config import get_settings
 from app.core.request_context import request_context_middleware
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
 @asynccontextmanager
