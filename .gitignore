@@ -59,3 +59,4 @@ release-evidence/*
 *.db
 *.sqlite
 *.sqlite3
+gitleaks-report.json
