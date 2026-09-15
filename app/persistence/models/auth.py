@@ -85,6 +85,11 @@ class ApiKey(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "id",
+            name="uq_api_keys_tenant_id",
+        ),
         ForeignKeyConstraint(
             ["tenant_id", "application_id"],
             ["applications.tenant_id", "applications.id"],

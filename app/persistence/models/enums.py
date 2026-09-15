@@ -49,3 +49,30 @@ class RetentionState(StrEnum):
     PURGING = "PURGING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+
+
+class WorkloadType(StrEnum):
+    NORMAL = "NORMAL"
+    LLM = "LLM"
+
+
+class LlmFinalStatus(StrEnum):
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+    CLIENT_CANCELLED = "CLIENT_CANCELLED"
+
+
+class AttemptStatus(StrEnum):
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+class AuditResult(StrEnum):
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+
+
+class RetentionJobType(StrEnum):
+    API_RETENTION = "API_RETENTION"
+    LLM_RETENTION = "LLM_RETENTION"

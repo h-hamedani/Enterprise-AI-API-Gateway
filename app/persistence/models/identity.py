@@ -101,6 +101,11 @@ class AdminToken(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "id",
+            name="uq_admin_tokens_tenant_id",
+        ),
         ForeignKeyConstraint(
             ["tenant_id"],
             ["tenants.id"],

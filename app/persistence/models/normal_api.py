@@ -160,6 +160,11 @@ class NormalApiRoute(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "id",
+            name="uq_normal_api_routes_tenant_id",
+        ),
         ForeignKeyConstraint(
             ["tenant_id", "service_id"],
             [

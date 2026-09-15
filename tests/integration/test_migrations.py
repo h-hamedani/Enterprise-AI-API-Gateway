@@ -24,6 +24,13 @@ EXPECTED_TABLES = {
     "normal_api_routes",
     "normal_api_services",
     "tenants",
+    "rate_limit_policies",
+    "requests",
+    "llm_requests",
+    "llm_attempts",
+    "audit_logs",
+    "config_versions",
+    "retention_checkpoints",
 }
 
 EXPECTED_ENUMS = {
@@ -32,6 +39,13 @@ EXPECTED_ENUMS = {
     "model_capability",
     "provider_type",
     "resource_status",
+    "rate_scope_type",
+    "workload_type",
+    "llm_final_status",
+    "attempt_status",
+    "audit_result",
+    "retention_state",
+    "retention_job_type",
 }
 
 M13_TABLES = {
@@ -46,6 +60,26 @@ M13_TABLES = {
 }
 
 M13_ENUMS = {"certification_status", "model_capability", "provider_type"}
+
+M14_TABLES = {
+    "rate_limit_policies",
+    "requests",
+    "llm_requests",
+    "llm_attempts",
+    "audit_logs",
+    "config_versions",
+    "retention_checkpoints",
+}
+
+M14_ENUMS = {
+    "rate_scope_type",
+    "workload_type",
+    "llm_final_status",
+    "attempt_status",
+    "audit_result",
+    "retention_state",
+    "retention_job_type",
+}
 
 
 def alembic_config() -> Config:
@@ -66,7 +100,10 @@ def database_enum_names() -> set[str]:
                     WHERE typname IN (
                         'resource_status', 'idempotency_state',
                         'provider_type', 'certification_status',
-                        'model_capability'
+                        'model_capability', 'rate_scope_type',
+                        'workload_type', 'llm_final_status',
+                        'attempt_status', 'audit_result',
+                        'retention_state', 'retention_job_type'
                     )
                     """
                 )
@@ -147,5 +184,46 @@ def test_m13_targeted_downgrade_preserves_baseline_and_reupgrades():
         command.upgrade(config, "head")
         assert M13_TABLES <= database_table_names()
         assert M13_ENUMS <= database_enum_names()
+    finally:
+        command.upgrade(config, "head")
+
+
+def test_m14_targeted_downgrade_preserves_m13_and_reupgrades():
+    settings = get_settings()
+    if settings.environment == "production":
+        raise RuntimeError("Migration integration tests must never run in production.")
+
+    config = alembic_config()
+    try:
+        command.upgrade(config, "head")
+        command.downgrade(config, "a9c4e7f12b36")
+
+        tables = database_table_names()
+        enums = database_enum_names()
+        assert tables.isdisjoint(M14_TABLES)
+        assert enums.isdisjoint(M14_ENUMS)
+        assert M13_TABLES <= tables
+        assert M13_ENUMS <= enums
+        assert "resource_status" in enums
+
+        engine = create_engine(settings.postgres_migration_dsn)
+        try:
+            inspector = inspect(engine)
+            for table_name, constraint_name in (
+                ("api_keys", "uq_api_keys_tenant_id"),
+                ("admin_tokens", "uq_admin_tokens_tenant_id"),
+                ("normal_api_routes", "uq_normal_api_routes_tenant_id"),
+            ):
+                names = {
+                    item["name"]
+                    for item in inspector.get_unique_constraints(table_name)
+                }
+                assert constraint_name not in names
+        finally:
+            engine.dispose()
+
+        command.upgrade(config, "head")
+        assert M14_TABLES <= database_table_names()
+        assert M14_ENUMS <= database_enum_names()
     finally:
         command.upgrade(config, "head")
