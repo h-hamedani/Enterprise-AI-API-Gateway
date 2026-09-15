@@ -16,7 +16,13 @@ class Settings(BaseSettings):
         "production",
     ] = "development"
 
-    postgres_dsn: str = "postgresql+psycopg://gateway:gateway@localhost:55432/gateway"
+    postgres_dsn: str = (
+        "postgresql+psycopg_async://gateway:gateway@localhost:55432/gateway"
+    )
+
+    postgres_migration_dsn: str = (
+        "postgresql+psycopg://gateway:gateway@localhost:55432/gateway"
+    )
 
     redis_url: str = "redis://localhost:6379/0"
 
