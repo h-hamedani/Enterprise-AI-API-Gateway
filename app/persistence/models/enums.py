@@ -28,6 +28,20 @@ class CertificationStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class ProviderType(StrEnum):
+    OPENAI = "OPENAI"
+    ANTHROPIC = "ANTHROPIC"
+    VLLM = "VLLM"
+    GENERIC_OPENAI_COMPAT = "GENERIC_OPENAI_COMPAT"
+
+
+class ModelCapability(StrEnum):
+    CHAT = "CHAT"
+    STREAMING = "STREAMING"
+    TOOLS = "TOOLS"
+    EMBEDDINGS = "EMBEDDINGS"
+
+
 class RetentionState(StrEnum):
     STARTED = "STARTED"
     ROLLED_UP = "ROLLED_UP"
