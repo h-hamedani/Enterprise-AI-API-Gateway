@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.20.0",
+    "cryptography>=46.0.0",
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
     "psycopg[binary]>=3.3.5",
@@ -22,6 +23,7 @@ dependencies = [
 
 [project.scripts]
 enterprise-ai-api-gateway = "enterprise_ai_api_gateway:main"
+gateway-security = "app.cli:main"
 
 
 [dependency-groups]

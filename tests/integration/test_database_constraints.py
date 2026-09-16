@@ -352,7 +352,7 @@ def test_duplicate_idempotency_scope_key_is_rejected(
         "tenant_id": tenant_id,
         "admin_user_id": admin_user_id,
         "endpoint_key": "admin.api_keys.create",
-        "idempotency_key": "idem-duplicate-test",
+        "idempotency_key_hash": "a" * 64,
         "request_fingerprint": "a" * 64,
         "state": "IN_PROGRESS",
         "response_status": None,
@@ -421,7 +421,7 @@ def test_same_idempotency_key_for_different_admin_users_is_allowed(
     common_values = {
         "tenant_id": tenant_id,
         "endpoint_key": "admin.api_keys.create",
-        "idempotency_key": "same-key-different-admin",
+        "idempotency_key_hash": "b" * 64,
         "state": "IN_PROGRESS",
         "response_status": None,
         "response_body_ciphertext": None,

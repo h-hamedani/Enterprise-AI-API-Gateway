@@ -39,8 +39,8 @@ class IdempotencyRecord(
         nullable=False,
     )
 
-    idempotency_key: Mapped[str] = mapped_column(
-        String(255),
+    idempotency_key_hash: Mapped[str] = mapped_column(
+        String(64),
         nullable=False,
     )
 
@@ -92,8 +92,8 @@ class IdempotencyRecord(
             "tenant_id",
             "admin_user_id",
             "endpoint_key",
-            "idempotency_key",
-            name="uq_idempotency_scope_key",
+            "idempotency_key_hash",
+            name="uq_idempotency_scope_key_hash",
         ),
         Index(
             "ix_idempotency_expires_at",

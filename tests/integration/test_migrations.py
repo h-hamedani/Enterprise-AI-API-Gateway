@@ -278,3 +278,36 @@ def test_m15_targeted_downgrade_preserves_m14_and_reupgrades():
         assert M15_ENUMS <= database_enum_names()
     finally:
         command.upgrade(config, "head")
+
+
+def test_m16_targeted_downgrade_restores_m15_idempotency_schema():
+    settings = get_settings()
+    if settings.environment == "production":
+        raise RuntimeError("Migration integration tests must never run in production.")
+    config = alembic_config()
+    try:
+        command.upgrade(config, "head")
+        command.downgrade(config, "f3b6a1c9d2e4")
+        engine = create_engine(settings.postgres_migration_dsn)
+        try:
+            columns = {
+                column["name"]
+                for column in inspect(engine).get_columns("idempotency_records")
+            }
+            assert "idempotency_key" in columns
+            assert "idempotency_key_hash" not in columns
+        finally:
+            engine.dispose()
+        command.upgrade(config, "head")
+        engine = create_engine(settings.postgres_migration_dsn)
+        try:
+            columns = {
+                column["name"]
+                for column in inspect(engine).get_columns("idempotency_records")
+            }
+            assert "idempotency_key_hash" in columns
+            assert "idempotency_key" not in columns
+        finally:
+            engine.dispose()
+    finally:
+        command.upgrade(config, "head")
