@@ -131,8 +131,8 @@ class Request(UUIDPrimaryKeyMixin, Base):
             ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
-            ["tenant_id", "api_key_id"],
-            ["api_keys.tenant_id", "api_keys.id"],
+            ["tenant_id", "application_id", "api_key_id"],
+            ["api_keys.tenant_id", "api_keys.application_id", "api_keys.id"],
             ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
@@ -141,6 +141,16 @@ class Request(UUIDPrimaryKeyMixin, Base):
             ondelete="RESTRICT",
         ),
         UniqueConstraint("tenant_id", "id", name="uq_requests_tenant_id"),
+        UniqueConstraint(
+            "tenant_id",
+            "id",
+            "workload_type",
+            name="uq_requests_tenant_id_workload",
+        ),
+        CheckConstraint(
+            "api_key_id IS NULL OR application_id IS NOT NULL",
+            name="request_api_key_requires_application",
+        ),
         CheckConstraint(
             "latency_ms IS NULL OR latency_ms >= 0", name="request_latency_nonnegative"
         ),
@@ -174,6 +184,12 @@ class LlmRequest(UUIDPrimaryKeyMixin, Base):
 
     tenant_id: Mapped[UUID] = mapped_column(nullable=False)
     request_id_fk: Mapped[UUID] = mapped_column(nullable=False, unique=True)
+    request_workload_type: Mapped[WorkloadType] = mapped_column(
+        Enum(WorkloadType, name="workload_type", create_type=False),
+        nullable=False,
+        default=WorkloadType.LLM,
+        server_default=text("'LLM'::workload_type"),
+    )
     requested_model: Mapped[str] = mapped_column(String(160), nullable=False)
     resolved_alias_id: Mapped[UUID | None] = mapped_column(nullable=True)
     final_model_id: Mapped[UUID | None] = mapped_column(nullable=True)
@@ -196,8 +212,8 @@ class LlmRequest(UUIDPrimaryKeyMixin, Base):
 
     __table_args__ = (
         ForeignKeyConstraint(
-            ["tenant_id", "request_id_fk"],
-            ["requests.tenant_id", "requests.id"],
+            ["tenant_id", "request_id_fk", "request_workload_type"],
+            ["requests.tenant_id", "requests.id", "requests.workload_type"],
             ondelete="CASCADE",
         ),
         ForeignKeyConstraint(
@@ -213,6 +229,10 @@ class LlmRequest(UUIDPrimaryKeyMixin, Base):
         UniqueConstraint("tenant_id", "id", name="uq_llm_requests_tenant_id"),
         CheckConstraint(
             "attempt_count >= 0", name="llm_request_attempt_count_nonnegative"
+        ),
+        CheckConstraint(
+            "request_workload_type = 'LLM'",
+            name="llm_request_workload_type_llm",
         ),
         CheckConstraint(
             "input_tokens_total IS NULL OR input_tokens_total >= 0",
@@ -276,8 +296,12 @@ class LlmAttempt(UUIDPrimaryKeyMixin, Base):
             ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
-            ["tenant_id", "model_id"],
-            ["llm_models.tenant_id", "llm_models.id"],
+            ["tenant_id", "provider_target_id", "model_id"],
+            [
+                "llm_models.tenant_id",
+                "llm_models.provider_target_id",
+                "llm_models.id",
+            ],
             ondelete="RESTRICT",
         ),
         UniqueConstraint(
@@ -352,6 +376,15 @@ class AuditLog(UUIDPrimaryKeyMixin, Base):
         ForeignKeyConstraint(
             ["tenant_id", "actor_admin_token_id"],
             ["admin_tokens.tenant_id", "admin_tokens.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "actor_admin_user_id", "actor_admin_token_id"],
+            [
+                "admin_tokens.tenant_id",
+                "admin_tokens.admin_user_id",
+                "admin_tokens.id",
+            ],
             ondelete="RESTRICT",
         ),
         Index(

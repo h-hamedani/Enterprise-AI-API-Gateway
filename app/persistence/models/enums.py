@@ -6,6 +6,29 @@ class ResourceStatus(StrEnum):
     DISABLED = "DISABLED"
 
 
+class PrincipalStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    DISABLED = "DISABLED"
+    REVOKED = "REVOKED"
+
+
+class PermissionResourceType(StrEnum):
+    SERVICE = "SERVICE"
+    ROUTE = "ROUTE"
+    LLM_ALIAS = "LLM_ALIAS"
+    LLM_MODEL = "LLM_MODEL"
+
+
+class PermissionAction(StrEnum):
+    INVOKE = "INVOKE"
+
+
+class ServiceAuthType(StrEnum):
+    NONE = "NONE"
+    STATIC_BEARER = "STATIC_BEARER"
+    STATIC_HEADER = "STATIC_HEADER"
+
+
 class IdempotencyState(StrEnum):
     IN_PROGRESS = "IN_PROGRESS"
     COMPLETED = "COMPLETED"

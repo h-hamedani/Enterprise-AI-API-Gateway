@@ -1,18 +1,22 @@
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import (
     BigInteger,
-    Boolean,
     CheckConstraint,
+    DateTime,
     Enum,
     ForeignKeyConstraint,
     Index,
     Integer,
+    LargeBinary,
     String,
     UniqueConstraint,
+    text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.persistence.models.base import (
@@ -20,7 +24,7 @@ from app.persistence.models.base import (
     TimestampMixin,
     UUIDPrimaryKeyMixin,
 )
-from app.persistence.models.enums import ResourceStatus
+from app.persistence.models.enums import ResourceStatus, ServiceAuthType
 
 
 class NormalApiService(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -153,10 +157,15 @@ class NormalApiRoute(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
     )
 
-    enabled: Mapped[bool] = mapped_column(
-        Boolean,
+    upstream_path_template: Mapped[str] = mapped_column(String(1024), nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False)
+    timeout_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    header_policy: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    status: Mapped[ResourceStatus] = mapped_column(
+        Enum(ResourceStatus, name="resource_status"),
         nullable=False,
-        default=True,
+        default=ResourceStatus.ACTIVE,
     )
 
     __table_args__ = (
@@ -171,7 +180,7 @@ class NormalApiRoute(UUIDPrimaryKeyMixin, TimestampMixin, Base):
                 "normal_api_services.tenant_id",
                 "normal_api_services.id",
             ],
-            ondelete="CASCADE",
+            ondelete="RESTRICT",
         ),
         UniqueConstraint(
             "tenant_id",
@@ -188,10 +197,66 @@ class NormalApiRoute(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "path_pattern LIKE '/%'",
             name="normal_api_route_path_starts_with_slash",
         ),
+        CheckConstraint("priority >= 0", name="normal_api_route_priority_nonnegative"),
+        CheckConstraint(
+            "timeout_ms IS NULL OR timeout_ms > 0",
+            name="normal_api_route_timeout_positive",
+        ),
         Index(
-            "ix_normal_api_routes_tenant_service_enabled",
+            "ix_normal_api_routes_tenant_service_status",
             "tenant_id",
             "service_id",
-            "enabled",
+            "status",
         ),
+    )
+
+
+class ServiceCredential(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "service_credentials"
+
+    tenant_id: Mapped[UUID] = mapped_column(nullable=False)
+    service_id: Mapped[UUID] = mapped_column(nullable=False)
+    auth_type: Mapped[ServiceAuthType] = mapped_column(
+        Enum(ServiceAuthType, name="service_auth_type"), nullable=False
+    )
+    header_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    secret_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    key_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[ResourceStatus] = mapped_column(
+        Enum(ResourceStatus, name="resource_status"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    rotated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "service_id"],
+            ["normal_api_services.tenant_id", "normal_api_services.id"],
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "(auth_type = 'NONE' AND header_name IS NULL "
+            "AND secret_ciphertext IS NULL AND key_version IS NULL) OR "
+            "(auth_type = 'STATIC_BEARER' AND header_name IS NULL "
+            "AND secret_ciphertext IS NOT NULL AND key_version IS NOT NULL) OR "
+            "(auth_type = 'STATIC_HEADER' AND header_name IS NOT NULL "
+            "AND secret_ciphertext IS NOT NULL AND key_version IS NOT NULL)",
+            name="service_credential_auth_fields_consistent",
+        ),
+        CheckConstraint(
+            "key_version IS NULL OR key_version > 0",
+            name="service_credential_key_version_positive",
+        ),
+        Index(
+            "uq_service_credentials_one_active",
+            "tenant_id",
+            "service_id",
+            unique=True,
+            postgresql_where=text("status = 'ACTIVE'"),
+        ),
+        Index("ix_service_credentials_tenant_service", "tenant_id", "service_id"),
     )

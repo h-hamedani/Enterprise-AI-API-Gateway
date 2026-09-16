@@ -200,6 +200,12 @@ class LlmModel(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UniqueConstraint(
             "tenant_id",
             "provider_target_id",
+            "id",
+            name="uq_llm_models_tenant_target_id",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "provider_target_id",
             "provider_model_name",
             name="uq_llm_models_target_provider_name",
         ),

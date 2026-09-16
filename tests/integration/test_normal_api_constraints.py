@@ -90,7 +90,11 @@ def route_values(
         "service_id": service_id,
         "method": method,
         "path_pattern": path_pattern,
-        "enabled": True,
+        "upstream_path_template": path_pattern,
+        "priority": 0,
+        "timeout_ms": None,
+        "header_policy": None,
+        "status": "ACTIVE",
         "created_at": timestamp,
         "updated_at": timestamp,
     }

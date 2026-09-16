@@ -62,6 +62,7 @@ def add_admin(connection, tenant_id, suffix):
             tenant_id=tenant_id,
             admin_user_id=user_id,
             token_hash=f"hash-{suffix}",
+            token_prefix=f"adm_{suffix}"[:32],
             status="ACTIVE",
             created_at=ts,
             updated_at=ts,

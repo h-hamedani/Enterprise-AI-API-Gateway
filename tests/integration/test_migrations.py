@@ -11,6 +11,7 @@ EXPECTED_TABLES = {
     "admin_users",
     "alembic_version",
     "api_keys",
+    "api_key_permissions",
     "applications",
     "idempotency_records",
     "llm_alias_targets",
@@ -23,6 +24,7 @@ EXPECTED_TABLES = {
     "model_prices",
     "normal_api_routes",
     "normal_api_services",
+    "service_credentials",
     "tenants",
     "rate_limit_policies",
     "requests",
@@ -46,6 +48,10 @@ EXPECTED_ENUMS = {
     "audit_result",
     "retention_state",
     "retention_job_type",
+    "principal_status",
+    "permission_resource_type",
+    "permission_action",
+    "service_auth_type",
 }
 
 M13_TABLES = {
@@ -81,6 +87,14 @@ M14_ENUMS = {
     "retention_job_type",
 }
 
+M15_TABLES = {"api_key_permissions", "service_credentials"}
+M15_ENUMS = {
+    "principal_status",
+    "permission_resource_type",
+    "permission_action",
+    "service_auth_type",
+}
+
 
 def alembic_config() -> Config:
     return Config("alembic.ini")
@@ -104,6 +118,8 @@ def database_enum_names() -> set[str]:
                         'workload_type', 'llm_final_status',
                         'attempt_status', 'audit_result',
                         'retention_state', 'retention_job_type'
+                        , 'principal_status', 'permission_resource_type',
+                        'permission_action', 'service_auth_type'
                     )
                     """
                 )
@@ -225,5 +241,40 @@ def test_m14_targeted_downgrade_preserves_m13_and_reupgrades():
         command.upgrade(config, "head")
         assert M14_TABLES <= database_table_names()
         assert M14_ENUMS <= database_enum_names()
+    finally:
+        command.upgrade(config, "head")
+
+
+def test_m15_targeted_downgrade_preserves_m14_and_reupgrades():
+    settings = get_settings()
+    if settings.environment == "production":
+        raise RuntimeError("Migration integration tests must never run in production.")
+
+    config = alembic_config()
+    try:
+        command.upgrade(config, "head")
+        command.downgrade(config, "c7d8e9f0a1b2")
+
+        tables = database_table_names()
+        enums = database_enum_names()
+        assert tables.isdisjoint(M15_TABLES)
+        assert enums.isdisjoint(M15_ENUMS)
+        assert M14_TABLES <= tables
+        assert M14_ENUMS <= enums
+
+        inspector = inspect(create_engine(settings.postgres_migration_dsn))
+        route_columns = {
+            column["name"] for column in inspector.get_columns("normal_api_routes")
+        }
+        assert {
+            "upstream_path_template",
+            "priority",
+            "timeout_ms",
+            "header_policy",
+        }.isdisjoint(route_columns)
+
+        command.upgrade(config, "head")
+        assert M15_TABLES <= database_table_names()
+        assert M15_ENUMS <= database_enum_names()
     finally:
         command.upgrade(config, "head")

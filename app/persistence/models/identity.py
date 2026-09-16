@@ -4,6 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     Enum,
     ForeignKeyConstraint,
@@ -18,7 +19,7 @@ from app.persistence.models.base import (
     TimestampMixin,
     UUIDPrimaryKeyMixin,
 )
-from app.persistence.models.enums import ResourceStatus
+from app.persistence.models.enums import PrincipalStatus, ResourceStatus
 
 
 class Tenant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -83,16 +84,22 @@ class AdminToken(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     tenant_id: Mapped[UUID] = mapped_column(nullable=False)
     admin_user_id: Mapped[UUID] = mapped_column(nullable=False)
 
+    token_prefix: Mapped[str] = mapped_column(String(32), nullable=False)
+
     token_hash: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
         unique=True,
     )
 
-    status: Mapped[ResourceStatus] = mapped_column(
-        Enum(ResourceStatus, name="resource_status"),
+    status: Mapped[PrincipalStatus] = mapped_column(
+        Enum(PrincipalStatus, name="principal_status"),
         nullable=False,
-        default=ResourceStatus.ACTIVE,
+        default=PrincipalStatus.ACTIVE,
+    )
+
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
     revoked_at: Mapped[datetime | None] = mapped_column(
@@ -105,6 +112,12 @@ class AdminToken(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "tenant_id",
             "id",
             name="uq_admin_tokens_tenant_id",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "admin_user_id",
+            "id",
+            name="uq_admin_tokens_tenant_user_id",
         ),
         ForeignKeyConstraint(
             ["tenant_id"],
@@ -121,5 +134,9 @@ class AdminToken(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "tenant_id",
             "admin_user_id",
             "status",
+        ),
+        CheckConstraint(
+            "(status = 'REVOKED') = (revoked_at IS NOT NULL)",
+            name="admin_token_revoked_status_consistent",
         ),
     )

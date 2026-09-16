@@ -1,4 +1,4 @@
-from app.persistence.models.auth import ApiKey, Application
+from app.persistence.models.auth import ApiKey, ApiKeyPermission, Application
 from app.persistence.models.base import Base
 from app.persistence.models.idempotency import IdempotencyRecord
 from app.persistence.models.identity import AdminToken, AdminUser, Tenant
@@ -15,6 +15,7 @@ from app.persistence.models.llm_registry import (
 from app.persistence.models.normal_api import (
     NormalApiRoute,
     NormalApiService,
+    ServiceCredential,
 )
 from app.persistence.models.operations import (
     AuditLog,
@@ -30,6 +31,7 @@ __all__ = [
     "AdminToken",
     "AdminUser",
     "ApiKey",
+    "ApiKeyPermission",
     "Application",
     "AuditLog",
     "Base",
@@ -50,5 +52,6 @@ __all__ = [
     "RateLimitPolicy",
     "Request",
     "RetentionCheckpoint",
+    "ServiceCredential",
     "Tenant",
 ]
