@@ -39,3 +39,23 @@ class PolymorphicPermissionValidator:
             is None
         ):
             raise PermissionValidationError("Permission resource was not found.")
+
+
+class RateScopeValidator:
+    def validate_admin_token(
+        self,
+        connection: Connection,
+        *,
+        tenant_id: UUID,
+        admin_token_id: UUID,
+    ) -> None:
+        repository = TenantScopedRepository(Base.metadata.tables["admin_tokens"])
+        if (
+            repository.get(
+                connection,
+                tenant_id=tenant_id,
+                resource_id=admin_token_id,
+            )
+            is None
+        ):
+            raise PermissionValidationError("Rate-limit scope was not found.")

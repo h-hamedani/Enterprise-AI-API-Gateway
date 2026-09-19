@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from app.api.health import router as health_router
 from app.core.config import get_settings
+from app.core.errors import install_error_handlers
 from app.core.request_context import request_context_middleware
 
 if sys.platform == "win32":
@@ -52,6 +53,7 @@ def create_app() -> FastAPI:
     )
 
     app.middleware("http")(request_context_middleware)
+    install_error_handlers(app)
     app.include_router(health_router)
 
     return app
