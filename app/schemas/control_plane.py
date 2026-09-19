@@ -58,3 +58,24 @@ class ApiKeyCreated(ApiKeyMetadata):
 class ApiKeyPage(BaseModel):
     data: list[ApiKeyMetadata]
     next_cursor: str | None
+
+
+PermissionResource = Literal["SERVICE", "ROUTE", "LLM_ALIAS", "LLM_MODEL"]
+
+
+class ApiKeyPermissionWrite(StrictModel):
+    resource_type: PermissionResource
+    resource_id: UUID
+    action: Literal["INVOKE"]
+
+
+class ApiKeyPermission(ApiKeyPermissionWrite):
+    id: UUID
+
+
+class ApiKeyPermissionReplacement(StrictModel):
+    permissions: list[ApiKeyPermissionWrite]
+
+
+class ApiKeyPermissionList(BaseModel):
+    data: list[ApiKeyPermission]

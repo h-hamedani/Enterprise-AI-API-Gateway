@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy import and_, desc, insert, or_, select
 from sqlalchemy.engine import Connection, RowMapping
 
+from app.control_plane.permissions import PermissionAdminService
 from app.core.idempotency import (
     ClaimState,
     IdempotencyCoordinator,
@@ -49,6 +50,7 @@ class MutationHttpResult:
 class ControlPlaneAdminServices:
     applications: ApplicationAdminService
     api_keys: ApiKeyAdminService
+    permissions: PermissionAdminService
 
 
 def _status_value(value) -> str:
@@ -415,4 +417,5 @@ def create_control_plane_admin_services(
         api_keys=ApiKeyAdminService(
             CredentialHasher(credential_hmac_key), cursor_codec, idempotency
         ),
+        permissions=PermissionAdminService(),
     )

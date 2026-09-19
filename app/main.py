@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from app.api.control_plane import permission_router
 from app.api.control_plane import router as control_plane_router
 from app.api.health import router as health_router
 from app.control_plane.application_api_keys import create_control_plane_admin_services
@@ -73,6 +74,7 @@ def create_app() -> FastAPI:
     install_error_handlers(app)
     app.include_router(health_router)
     app.include_router(control_plane_router)
+    app.include_router(permission_router)
 
     return app
 
