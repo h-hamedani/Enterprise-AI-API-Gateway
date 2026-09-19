@@ -384,3 +384,35 @@ def test_database_role_privilege_boundaries(db_connection):
         )
         is True
     )
+    assert (
+        db_connection.scalar(
+            text(
+                "SELECT has_table_privilege('security_operations', 'audit_logs', 'INSERT')"
+            )
+        )
+        is True
+    )
+    assert (
+        db_connection.scalar(
+            text(
+                "SELECT has_table_privilege('security_operations', 'audit_logs', 'UPDATE')"
+            )
+        )
+        is False
+    )
+    assert (
+        db_connection.scalar(
+            text(
+                "SELECT has_table_privilege('security_operations', 'audit_logs', 'DELETE')"
+            )
+        )
+        is False
+    )
+    assert (
+        db_connection.scalar(
+            text(
+                "SELECT has_table_privilege('gateway_runtime', 'audit_logs', 'DELETE')"
+            )
+        )
+        is False
+    )

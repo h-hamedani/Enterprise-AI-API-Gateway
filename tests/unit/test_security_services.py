@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.control_plane import break_glass
 from app.core.security.credentials import CredentialAuthenticator, CredentialHasher
 from app.core.security.idempotency import IdempotencyDigester
 from app.core.security.secrets import SecretDecryptionError, SecretService
@@ -87,3 +88,26 @@ def test_secret_service_rejects_wrong_key_version_and_wrong_key():
         SecretService({1: b"b" * 32}, current_key_version=1).decrypt(
             envelope, aad=b"scope"
         )
+
+
+def test_break_glass_wrong_secret_raises_classified_non_sensitive_error():
+    service = break_glass.BreakGlassRecoveryService(
+        CredentialHasher(b"c" * 32),
+        recovery_secret_hash="0" * 64,
+    )
+    raw_secret = "never-disclose-this-recovery-secret"
+
+    with pytest.raises(break_glass.BreakGlassDeniedError) as raised:
+        service.recover(
+            None,
+            tenant_id=None,
+            admin_user_id=None,
+            recovery_secret=raw_secret,
+            recovery_mechanism="hidden_prompt",
+        )
+
+    assert (
+        raised.value.failure_category
+        is break_glass.BreakGlassFailureCategory.INVALID_RECOVERY_SECRET
+    )
+    assert raw_secret not in str(raised.value)

@@ -311,3 +311,40 @@ def test_m16_targeted_downgrade_restores_m15_idempotency_schema():
             engine.dispose()
     finally:
         command.upgrade(config, "head")
+
+
+def test_m17_targeted_downgrade_restores_m16_audit_grant():
+    settings = get_settings()
+    if settings.environment == "production":
+        raise RuntimeError("Migration integration tests must never run in production.")
+    config = alembic_config()
+    engine = create_engine(settings.postgres_migration_dsn)
+    try:
+        command.upgrade(config, "head")
+        with engine.connect() as connection:
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT has_table_privilege("
+                        "'security_operations', 'audit_logs', 'UPDATE')"
+                    )
+                )
+                is False
+            )
+
+        command.downgrade(config, "b7e2c4d6f8a0")
+        with engine.connect() as connection:
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT has_table_privilege("
+                        "'security_operations', 'audit_logs', 'UPDATE')"
+                    )
+                )
+                is True
+            )
+
+        command.upgrade(config, "head")
+    finally:
+        engine.dispose()
+        command.upgrade(config, "head")

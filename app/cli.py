@@ -6,18 +6,30 @@ import getpass
 import os
 import stat
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, insert, text
+from sqlalchemy.engine import Engine
 
 from app.control_plane.bootstrap import FirstAdminBootstrapService
-from app.control_plane.break_glass import BreakGlassRecoveryService
+from app.control_plane.break_glass import (
+    BreakGlassDeniedError,
+    BreakGlassFailureCategory,
+    BreakGlassRecoveryService,
+    BreakGlassResult,
+)
 from app.core.config import get_settings
 from app.core.security.credentials import CredentialHasher
+from app.persistence.models import Base
 
 
 class UnsafeSecretOutputError(RuntimeError):
+    pass
+
+
+class BreakGlassAuditError(RuntimeError):
     pass
 
 
@@ -64,6 +76,77 @@ def _security_engine():
     return engine
 
 
+def _record_failed_break_glass_audit(
+    engine: Engine,
+    *,
+    tenant_id: UUID,
+    admin_user_id: UUID,
+    recovery_mechanism: str,
+    failure_category: BreakGlassFailureCategory,
+) -> None:
+    audit = Base.metadata.tables["audit_logs"]
+    timestamp = datetime.now(UTC)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                insert(audit).values(
+                    id=uuid4(),
+                    tenant_id=tenant_id,
+                    actor_admin_user_id=None,
+                    actor_admin_token_id=None,
+                    action="ADMIN_BREAK_GLASS_RECOVERY",
+                    resource_type="ADMIN_USER",
+                    resource_id=admin_user_id,
+                    result="FAILED",
+                    metadata={
+                        "tenant_id": str(tenant_id),
+                        "admin_user_id": str(admin_user_id),
+                        "recovery_mechanism": recovery_mechanism,
+                        "failure_category": failure_category.value,
+                        "operator_identity": "security_operations",
+                    },
+                    created_at=timestamp,
+                )
+            )
+    except Exception:  # noqa: BLE001 - this boundary must fail closed on DB errors
+        raise BreakGlassAuditError(
+            "Break-glass recovery failed and its audit event could not be recorded."
+        ) from None
+
+
+def _execute_break_glass_recovery(
+    engine: Engine,
+    service: BreakGlassRecoveryService,
+    *,
+    tenant_id: UUID,
+    admin_user_id: UUID,
+    recovery_secret: str,
+    recovery_mechanism: str,
+) -> BreakGlassResult | None:
+    try:
+        with engine.begin() as connection:
+            return service.recover(
+                connection,
+                tenant_id=tenant_id,
+                admin_user_id=admin_user_id,
+                recovery_secret=recovery_secret,
+                recovery_mechanism=recovery_mechanism,
+            )
+    except BreakGlassDeniedError as exc:
+        failure_category = exc.failure_category
+    except Exception:  # noqa: BLE001 - classify any transactional recovery failure
+        failure_category = BreakGlassFailureCategory.RECOVERY_TRANSACTION_FAILED
+
+    _record_failed_break_glass_audit(
+        engine,
+        tenant_id=tenant_id,
+        admin_user_id=admin_user_id,
+        recovery_mechanism=recovery_mechanism,
+        failure_category=failure_category,
+    )
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="gateway-security")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -90,17 +173,19 @@ def main(argv: list[str] | None = None) -> int:
         if settings.break_glass_secret_hash is None:
             raise RuntimeError("BREAK_GLASS_SECRET_HASH is required.")
         recovery_secret, mechanism = _read_recovery_secret(args.recovery_secret_file)
-        with engine.begin() as connection:
-            result = BreakGlassRecoveryService(
+        result = _execute_break_glass_recovery(
+            engine,
+            BreakGlassRecoveryService(
                 _credential_hasher(),
                 recovery_secret_hash=settings.break_glass_secret_hash,
-            ).recover(
-                connection,
-                tenant_id=args.tenant_id,
-                admin_user_id=args.admin_user_id,
-                recovery_secret=recovery_secret,
-                recovery_mechanism=mechanism,
-            )
+            ),
+            tenant_id=args.tenant_id,
+            admin_user_id=args.admin_user_id,
+            recovery_secret=recovery_secret,
+            recovery_mechanism=mechanism,
+        )
+        if result is None:
+            return 1
         print(result.raw_replacement_token)
         return 0
     finally:

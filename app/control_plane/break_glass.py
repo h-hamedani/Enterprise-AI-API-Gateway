@@ -4,6 +4,7 @@ import hashlib
 import hmac
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from uuid import UUID, uuid4
 
 from sqlalchemy import insert, select, update
@@ -13,8 +14,16 @@ from app.core.security.credentials import CredentialHasher
 from app.persistence.models import Base
 
 
+class BreakGlassFailureCategory(StrEnum):
+    INVALID_RECOVERY_SECRET = "INVALID_RECOVERY_SECRET"
+    ADMIN_NOT_FOUND = "ADMIN_NOT_FOUND"
+    RECOVERY_TRANSACTION_FAILED = "RECOVERY_TRANSACTION_FAILED"
+
+
 class BreakGlassDeniedError(RuntimeError):
-    pass
+    def __init__(self, failure_category: BreakGlassFailureCategory) -> None:
+        super().__init__("Break-glass recovery was denied.")
+        self.failure_category = failure_category
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +52,9 @@ class BreakGlassRecoveryService:
     ) -> BreakGlassResult:
         presented = hashlib.sha256(recovery_secret.encode()).hexdigest()
         if not hmac.compare_digest(presented, self._recovery_secret_hash):
-            raise BreakGlassDeniedError("Break-glass recovery was denied.")
+            raise BreakGlassDeniedError(
+                BreakGlassFailureCategory.INVALID_RECOVERY_SECRET
+            )
 
         users = Base.metadata.tables["admin_users"]
         tokens = Base.metadata.tables["admin_tokens"]
@@ -56,7 +67,7 @@ class BreakGlassRecoveryService:
             )
         ).one_or_none()
         if user is None:
-            raise BreakGlassDeniedError("Break-glass recovery was denied.")
+            raise BreakGlassDeniedError(BreakGlassFailureCategory.ADMIN_NOT_FOUND)
 
         connection.execute(
             update(users)
