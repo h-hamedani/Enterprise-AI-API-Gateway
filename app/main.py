@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from app.api.control_plane import router as control_plane_router
 from app.api.health import router as health_router
+from app.control_plane.application_api_keys import create_control_plane_admin_services
 from app.core.config import get_settings
 from app.core.errors import install_error_handlers
 from app.core.request_context import request_context_middleware
@@ -36,6 +38,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.db_engine = db_engine
     app.state.redis = redis
     app.state.runtime_mode = "NORMAL"
+    if (
+        settings.credential_hmac_secret is not None
+        and settings.idempotency_hmac_secret is not None
+        and settings.encryption_current_key_version is not None
+    ):
+        app.state.control_plane_admin_services = create_control_plane_admin_services(
+            credential_hmac_key=base64.b64decode(settings.credential_hmac_secret),
+            idempotency_hmac_key=base64.b64decode(settings.idempotency_hmac_secret),
+            encryption_keys={
+                version: base64.b64decode(encoded)
+                for version, encoded in settings.encryption_keys.items()
+            },
+            current_encryption_key_version=settings.encryption_current_key_version,
+        )
 
     try:
         yield
