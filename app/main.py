@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from app.api.control_plane import router as control_plane_router
 from app.api.health import router as health_router
 from app.core.config import get_settings
 from app.core.errors import install_error_handlers
@@ -55,6 +56,7 @@ def create_app() -> FastAPI:
     app.middleware("http")(request_context_middleware)
     install_error_handlers(app)
     app.include_router(health_router)
+    app.include_router(control_plane_router)
 
     return app
 
