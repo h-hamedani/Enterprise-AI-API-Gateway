@@ -21,6 +21,7 @@ class GatewayHttpError(Exception):
     message: str
     param: str | None = None
     metadata: dict[str, Any] | None = None
+    headers: dict[str, str] | None = None
 
 
 def authentication_error() -> NoReturn:
@@ -47,9 +48,11 @@ def error_response(request: Request, error: GatewayHttpError) -> JSONResponse:
     request_id = getattr(request.state, "request_id", None) or get_request_id()
     if request_id is None:
         request_id = new_request_id()
+    headers = dict(error.headers or {})
+    headers["X-Request-ID"] = str(request_id)
     return JSONResponse(
         status_code=error.status_code,
-        headers={"X-Request-ID": str(request_id)},
+        headers=headers,
         content={
             "error": {
                 "message": error.message,
