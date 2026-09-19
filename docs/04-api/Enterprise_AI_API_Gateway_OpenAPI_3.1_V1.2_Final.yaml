@@ -4,9 +4,9 @@ info:
   version: 1.2.0
   summary: Final executable HTTP contract for Enterprise AI & API Gateway V1
   description: Derived from PRD V1.4, HLD V1.1 corrections, ERD V1.2 Final, Physical DB/Alembic V1.2 Final, API Specification
-    V1.2.2 Final, and frozen M0-M9 execution contracts. This artifact consolidates final V1 semantics for Normal API, OpenAI-compatible
-    LLM, Admin browser sessions, traffic-admission health, idempotency, certification, credential invalidation, SSRF/TLS and
-    SSE.
+    V1.2.2 Final, frozen M0-M9 execution contracts, and the M2.6 Normal API Registry Contract Reconciliation addendum.
+    This artifact consolidates final V1 semantics for Normal API, OpenAI-compatible LLM, Admin browser sessions,
+    traffic-admission health, idempotency, certification, credential invalidation, SSRF/TLS and SSE.
 servers:
 - url: https://gateway.example.com
   description: Production example
@@ -2062,7 +2062,11 @@ components:
       - id
       - name
       - base_url
-      - timeout_ms
+      - connect_timeout_seconds
+      - pool_timeout_seconds
+      - write_timeout_seconds
+      - read_idle_timeout_seconds
+      - pre_response_timeout_seconds
       - status
       - slug
       properties:
@@ -2074,7 +2078,19 @@ components:
         base_url:
           type: string
           format: uri
-        timeout_ms:
+        connect_timeout_seconds:
+          type: integer
+          minimum: 1
+        pool_timeout_seconds:
+          type: integer
+          minimum: 1
+        write_timeout_seconds:
+          type: integer
+          minimum: 1
+        read_idle_timeout_seconds:
+          type: integer
+          minimum: 1
+        pre_response_timeout_seconds:
           type: integer
           minimum: 1
         status:
@@ -2101,10 +2117,26 @@ components:
         base_url:
           type: string
           format: uri
-        timeout_ms:
+        connect_timeout_seconds:
           type: integer
           minimum: 1
-          default: 30000
+          default: 5
+        pool_timeout_seconds:
+          type: integer
+          minimum: 1
+          default: 5
+        write_timeout_seconds:
+          type: integer
+          minimum: 1
+          default: 30
+        read_idle_timeout_seconds:
+          type: integer
+          minimum: 1
+          default: 60
+        pre_response_timeout_seconds:
+          type: integer
+          minimum: 1
+          default: 120
         status:
           type: string
           enum:
@@ -2122,7 +2154,19 @@ components:
         base_url:
           type: string
           format: uri
-        timeout_ms:
+        connect_timeout_seconds:
+          type: integer
+          minimum: 1
+        pool_timeout_seconds:
+          type: integer
+          minimum: 1
+        write_timeout_seconds:
+          type: integer
+          minimum: 1
+        read_idle_timeout_seconds:
+          type: integer
+          minimum: 1
+        pre_response_timeout_seconds:
           type: integer
           minimum: 1
         status:
@@ -2177,7 +2221,8 @@ components:
       required:
       - service_id
       - path_pattern
-      - methods
+      - method
+      - upstream_path_template
       - priority
       additionalProperties: false
       properties:
@@ -2187,20 +2232,27 @@ components:
         path_pattern:
           type: string
           minLength: 1
-        methods:
-          type: array
-          minItems: 1
-          uniqueItems: true
-          items:
-            type: string
-            enum:
-            - GET
-            - POST
-            - PUT
-            - PATCH
-            - DELETE
+        method:
+          type: string
+          enum:
+          - GET
+          - POST
+          - PUT
+          - PATCH
+          - DELETE
+        upstream_path_template:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        header_policy:
+          type:
+          - object
+          - 'null'
+          additionalProperties: true
+          default: null
         priority:
           type: integer
+          minimum: 0
         timeout_ms:
           type:
           - integer
@@ -2219,20 +2271,26 @@ components:
       properties:
         path_pattern:
           type: string
-        methods:
-          type: array
-          minItems: 1
-          uniqueItems: true
-          items:
-            type: string
-            enum:
-            - GET
-            - POST
-            - PUT
-            - PATCH
-            - DELETE
+        method:
+          type: string
+          enum:
+          - GET
+          - POST
+          - PUT
+          - PATCH
+          - DELETE
+        upstream_path_template:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        header_policy:
+          type:
+          - object
+          - 'null'
+          additionalProperties: true
         priority:
           type: integer
+          minimum: 0
         timeout_ms:
           type:
           - integer
