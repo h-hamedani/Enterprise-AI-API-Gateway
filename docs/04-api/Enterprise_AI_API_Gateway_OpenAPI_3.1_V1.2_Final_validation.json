@@ -2,6 +2,7 @@
   "artifact": "Enterprise_AI_API_Gateway_OpenAPI_3.1_V1.2_Final.yaml",
   "source_contract": "Enterprise_AI_API_Gateway_API_Specification_V1.2.2_Final.docx",
   "reconciliation_addendum": "Enterprise_AI_API_Gateway_M2.6_Normal_API_Registry_Contract_Reconciliation.md",
+  "pricing_reconciliation_addendum": "Enterprise_AI_API_Gateway_M2.7_Model_Pricing_Contract_Reconciliation.md",
   "openapi": "3.1.0",
   "result": "PASS",
   "validation_method": {
@@ -103,6 +104,14 @@
     },
     {
       "check": "Route schemas expose upstream_path_template and header_policy",
+      "status": "PASS"
+    },
+    {
+      "check": "ModelPriceCreate requires the canonical physical economic fields",
+      "status": "PASS"
+    },
+    {
+      "check": "Model pricing schemas contain no per_1m or implicit currency/unit representation",
       "status": "PASS"
     },
     {

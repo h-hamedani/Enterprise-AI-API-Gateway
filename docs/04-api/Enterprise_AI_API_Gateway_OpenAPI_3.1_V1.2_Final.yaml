@@ -887,7 +887,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ModelPriceWrite'
+              $ref: '#/components/schemas/ModelPriceCreate'
       responses:
         '201':
           description: Price window created
@@ -2562,22 +2562,33 @@ components:
           scope_id:
             type: string
             format: uuid
-    ModelPriceWrite:
+    ModelPriceCreate:
       type: object
       required:
+      - input_price_per_unit
+      - output_price_per_unit
+      - unit_tokens
+      - currency
       - effective_from
       additionalProperties: false
       properties:
-        input_price_per_1m_tokens:
-          type:
-          - number
-          - 'null'
+        input_price_per_unit:
+          type: number
           minimum: 0
-        output_price_per_1m_tokens:
-          type:
-          - number
-          - 'null'
+          description: Decimal rate for the explicit unit_tokens quantity; persisted as numeric(20,10).
+        output_price_per_unit:
+          type: number
           minimum: 0
+          description: Decimal rate for the explicit unit_tokens quantity; persisted as numeric(20,10).
+        unit_tokens:
+          type: integer
+          minimum: 1
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+          pattern: ^[A-Z]{3}$
+          description: Uppercase three-character currency code. No implicit currency or FX conversion.
         effective_from:
           type: string
           format: date-time
@@ -2763,7 +2774,7 @@ components:
           format: date-time
     ModelPrice:
       allOf:
-      - $ref: '#/components/schemas/ModelPriceWrite'
+      - $ref: '#/components/schemas/ModelPriceCreate'
       - type: object
         required:
         - id
@@ -2780,16 +2791,22 @@ components:
       minProperties: 1
       additionalProperties: false
       properties:
-        input_price_per_1m_tokens:
-          type:
-          - number
-          - 'null'
+        input_price_per_unit:
+          type: number
           minimum: 0
-        output_price_per_1m_tokens:
-          type:
-          - number
-          - 'null'
+          description: When supplied, replaces the persisted non-null numeric(20,10) value.
+        output_price_per_unit:
+          type: number
           minimum: 0
+          description: When supplied, replaces the persisted non-null numeric(20,10) value.
+        unit_tokens:
+          type: integer
+          minimum: 1
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+          pattern: ^[A-Z]{3}$
         effective_from:
           type: string
           format: date-time
