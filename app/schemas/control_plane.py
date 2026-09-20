@@ -231,9 +231,14 @@ class ServiceCredentialWrite(StrictModel):
 class CredentialMetadata(BaseModel):
     id: UUID
     status: ServiceStatus
-    secret_type: Literal["NONE", "STATIC_BEARER", "STATIC_HEADER"]
+    secret_type: str
     created_at: datetime
     rotated_at: datetime | None
+
+
+class ProviderCredentialWrite(StrictModel):
+    secret: str
+    secret_type: str = "API_KEY"
 
 
 ProviderTypeValue = Literal["OPENAI", "ANTHROPIC", "VLLM", "GENERIC_OPENAI_COMPAT"]

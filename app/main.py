@@ -69,7 +69,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             current_encryption_key_version=settings.encryption_current_key_version,
         )
         app.state.llm_registry_service = create_llm_registry_service(
-            base64.b64decode(settings.idempotency_hmac_secret)
+            base64.b64decode(settings.idempotency_hmac_secret),
+            {
+                version: base64.b64decode(encoded)
+                for version, encoded in settings.encryption_keys.items()
+            },
+            settings.encryption_current_key_version,
         )
 
     try:

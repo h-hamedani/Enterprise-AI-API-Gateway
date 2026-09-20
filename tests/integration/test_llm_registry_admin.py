@@ -43,7 +43,7 @@ def test_registry_relationships_replacements_pricing_and_tenant_isolation():
             for t in (tenant_a, tenant_b)
         ],
     )
-    service = create_llm_registry_service(b"I" * 32)
+    service = create_llm_registry_service(b"I" * 32, {1: b"E" * 32}, 1)
     try:
         provider = service.create_provider(
             connection,

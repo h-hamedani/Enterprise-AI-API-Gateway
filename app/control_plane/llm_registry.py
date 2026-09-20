@@ -2,16 +2,27 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import and_, delete, desc, insert, or_, select
+from sqlalchemy import and_, delete, desc, insert, or_, select, update
 
+from app.control_plane.application_api_keys import MutationHttpResult
+from app.core.idempotency import (
+    ClaimState,
+    IdempotencyCoordinator,
+    IdempotencyRepository,
+    StoredHttpResponse,
+)
 from app.core.pagination import CursorPosition, PaginationCursorCodec
+from app.core.security.idempotency import IdempotencyDigester
+from app.core.security.secrets import SecretService
 from app.persistence.models import Base
 from app.persistence.repositories.tenant_scoped import TenantScopedRepository
 from app.schemas.control_plane import (
     AliasTargetWrite,
+    CredentialMetadata,
     LlmAliasCreate,
     LlmAliasPatch,
     LlmAliasResponse,
@@ -27,6 +38,7 @@ from app.schemas.control_plane import (
     ModelPriceCreate,
     ModelPricePatch,
     ModelPriceResponse,
+    ProviderCredentialWrite,
 )
 
 
@@ -47,7 +59,14 @@ def _value(value):
 
 
 class LlmRegistryAdminService:
-    def __init__(self, cursor: PaginationCursorCodec) -> None:
+    CREDENTIAL_ENDPOINT = "llm-target.credential.rotate"
+
+    def __init__(
+        self,
+        cursor: PaginationCursorCodec,
+        secrets: SecretService,
+        idempotency: IdempotencyCoordinator,
+    ) -> None:
         self.cursor = cursor
         self.providers = Base.metadata.tables["llm_providers"]
         self.targets = Base.metadata.tables["llm_provider_targets"]
@@ -56,6 +75,106 @@ class LlmRegistryAdminService:
         self.aliases = Base.metadata.tables["llm_aliases"]
         self.alias_targets = Base.metadata.tables["llm_alias_targets"]
         self.prices = Base.metadata.tables["model_prices"]
+        self.credentials = Base.metadata.tables["llm_provider_credentials"]
+        self.secrets = secrets
+        self.idempotency = idempotency
+
+    @staticmethod
+    def credential_aad(tenant_id, target_id, credential_id, secret_type):
+        return f"llm-provider-credential:v1:{tenant_id}:{target_id}:{credential_id}:{secret_type}".encode()
+
+    def rotate_credential(
+        self,
+        connection,
+        *,
+        tenant_id,
+        admin_user_id,
+        target_id,
+        request: ProviderCredentialWrite,
+        raw_idempotency_key,
+    ):
+        fingerprint = self.idempotency.fingerprint(
+            method="PUT",
+            endpoint_key=self.CREDENTIAL_ENDPOINT,
+            path_parameters={"target_id": target_id},
+            body=request.model_dump(mode="json"),
+        )
+        claim = self.idempotency.claim(
+            connection,
+            tenant_id=tenant_id,
+            admin_user_id=admin_user_id,
+            endpoint_key=self.CREDENTIAL_ENDPOINT,
+            raw_key=raw_idempotency_key,
+            request_fingerprint=fingerprint,
+        )
+        if claim.state is ClaimState.REPLAY:
+            if claim.response is None:
+                raise RuntimeError("Idempotency replay response is unavailable.")
+            return MutationHttpResult(claim.response, replayed=True)
+        self._get(connection, self.targets, tenant_id, target_id)
+        now, credential_id = datetime.now(UTC), uuid4()
+        envelope = self.secrets.encrypt(
+            request.secret.encode(),
+            aad=self.credential_aad(
+                tenant_id, target_id, credential_id, request.secret_type
+            ),
+        )
+        connection.execute(
+            select(self.credentials.c.id)
+            .where(
+                self.credentials.c.tenant_id == tenant_id,
+                self.credentials.c.provider_target_id == target_id,
+                self.credentials.c.status == "ACTIVE",
+            )
+            .with_for_update()
+        ).all()
+        connection.execute(
+            update(self.credentials)
+            .where(
+                self.credentials.c.tenant_id == tenant_id,
+                self.credentials.c.provider_target_id == target_id,
+                self.credentials.c.status == "ACTIVE",
+            )
+            .values(status="DISABLED", rotated_at=now, updated_at=now)
+        )
+        connection.execute(
+            insert(self.credentials).values(
+                id=credential_id,
+                tenant_id=tenant_id,
+                provider_target_id=target_id,
+                secret_ciphertext=envelope.ciphertext,
+                key_version=str(envelope.key_version),
+                status="ACTIVE",
+                rotated_at=None,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        metadata = CredentialMetadata(
+            id=credential_id,
+            status="ACTIVE",
+            secret_type=request.secret_type,
+            created_at=now,
+            rotated_at=None,
+        )
+        response = StoredHttpResponse(
+            200,
+            json.dumps(
+                metadata.model_dump(mode="json"), separators=(",", ":"), sort_keys=True
+            ).encode(),
+            (("Content-Type", "application/json"),),
+        )
+        if claim.record_id is None:
+            raise RuntimeError("Idempotency claim has no record identifier.")
+        self.idempotency.complete(
+            connection,
+            tenant_id=tenant_id,
+            admin_user_id=admin_user_id,
+            endpoint_key=self.CREDENTIAL_ENDPOINT,
+            record_id=claim.record_id,
+            response=response,
+        )
+        return MutationHttpResult(response)
 
     def _get(self, connection, table, tenant_id, resource_id):
         row = TenantScopedRepository(table).get(
@@ -488,6 +607,16 @@ class LlmRegistryAdminService:
         return [self.price(r) for r in rows]
 
 
-def create_llm_registry_service(signing_key: bytes):
+def create_llm_registry_service(
+    signing_key: bytes,
+    encryption_keys: dict[int, bytes],
+    current_encryption_key_version: int,
+):
     key = hmac.new(signing_key, b"llm-registry-pagination-v1", hashlib.sha256).digest()
-    return LlmRegistryAdminService(PaginationCursorCodec(key))
+    secrets = SecretService(
+        encryption_keys, current_key_version=current_encryption_key_version
+    )
+    idempotency = IdempotencyCoordinator(
+        IdempotencyRepository(IdempotencyDigester(signing_key)), secrets
+    )
+    return LlmRegistryAdminService(PaginationCursorCodec(key), secrets, idempotency)

@@ -4,6 +4,12 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.exc import IntegrityError
 
 from app.api.dependencies import require_admin_context
+from app.api.idempotency import (
+    LLM_CREDENTIAL_ROTATION_POLICY,
+    idempotency_key,
+    raise_idempotency_http_error,
+    replay_response,
+)
 from app.control_plane.auth import AdminContext
 from app.control_plane.llm_registry import (
     LlmRegistryAdminService,
@@ -16,6 +22,12 @@ from app.core.errors import (
     invalid_request,
     resource_conflict,
     resource_not_found,
+)
+from app.core.idempotency import (
+    IdempotencyConflictError,
+    IdempotencyExpiredError,
+    IdempotencyInProgressError,
+    IdempotencyReplayError,
 )
 from app.schemas.control_plane import *
 
@@ -89,6 +101,40 @@ async def _write_price(request, fn):
         ValueError,
     ) as error:
         _map_price_error(error)
+
+
+@router.put("/targets/{target_id}/credential", response_model=CredentialMetadata)
+async def rotate_target_credential(
+    target_id: UUID,
+    payload: ProviderCredentialWrite,
+    request: Request,
+    context: AdminContext = AUTH,
+):
+    raw_key = idempotency_key(request, LLM_CREDENTIAL_ROTATION_POLICY)
+    try:
+        async with request.app.state.db_engine.begin() as connection:
+            result = await connection.run_sync(
+                lambda c: _svc(request).rotate_credential(
+                    c,
+                    tenant_id=context.tenant_id,
+                    admin_user_id=context.admin_user_id,
+                    target_id=target_id,
+                    request=payload,
+                    raw_idempotency_key=raw_key,
+                )
+            )
+        return replay_response(result.response)
+    except LlmRegistryNotFoundError:
+        resource_not_found()
+    except (
+        IdempotencyConflictError,
+        IdempotencyExpiredError,
+        IdempotencyInProgressError,
+        IdempotencyReplayError,
+    ) as error:
+        raise_idempotency_http_error(error)
+    except IntegrityError:
+        resource_conflict()
 
 
 @router.get("/providers")
