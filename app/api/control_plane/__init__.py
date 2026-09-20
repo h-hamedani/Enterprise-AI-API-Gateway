@@ -1,3 +1,4 @@
+from app.api.control_plane.admin_reads import router as admin_read_router
 from app.api.control_plane.application_api_keys import (
     router as application_api_keys_router,
 )
@@ -18,6 +19,7 @@ router = application_api_keys_router
 
 __all__ = [
     "ADMIN_API_PREFIX",
+    "admin_read_router",
     "llm_registry_router",
     "normal_api_registry_router",
     "permission_router",

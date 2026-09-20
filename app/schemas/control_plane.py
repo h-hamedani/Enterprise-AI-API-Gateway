@@ -82,6 +82,38 @@ class ApiKeyPermissionList(BaseModel):
     data: list[ApiKeyPermission]
 
 
+class AuditLogResponse(BaseModel):
+    id: UUID
+    actor_admin_user_id: UUID | None
+    actor_admin_token_id: UUID | None
+    action: str
+    resource_type: str
+    resource_id: UUID | None
+    request_id: UUID | None
+    result: Literal["SUCCESS", "FAILED"]
+    created_at: datetime
+
+
+class AuditPage(BaseModel):
+    data: list[AuditLogResponse]
+    next_cursor: str | None
+
+
+class ConfigVersionResponse(BaseModel):
+    config_version: int = Field(ge=0)
+
+
+class DependencyHealth(BaseModel):
+    status: str
+    reason: str | None = None
+
+
+class AdminHealthResponse(BaseModel):
+    status: str
+    degraded_mode: bool
+    dependencies: dict[str, DependencyHealth]
+
+
 ServiceStatus = Literal["ACTIVE", "DISABLED"]
 HttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
 
@@ -268,6 +300,11 @@ class LlmProviderResponse(LlmProviderCreate):
     id: UUID
 
 
+class LlmProviderPage(BaseModel):
+    data: list[LlmProviderResponse]
+    next_cursor: str | None
+
+
 class LlmTargetCreate(StrictModel):
     provider_id: UUID
     name: str = Field(min_length=1, max_length=160)
@@ -322,6 +359,11 @@ class LlmTargetResponse(LlmTargetCreate):
     certification_metadata: dict | None = None
 
 
+class LlmTargetPage(BaseModel):
+    data: list[LlmTargetResponse]
+    next_cursor: str | None
+
+
 class LlmModelCreate(StrictModel):
     provider_target_id: UUID
     provider_model_name: str = Field(min_length=1, max_length=255)
@@ -345,6 +387,11 @@ class LlmModelPatch(StrictModel):
 class LlmModelResponse(LlmModelCreate):
     id: UUID
     capabilities: list[CapabilityValue]
+
+
+class LlmModelPage(BaseModel):
+    data: list[LlmModelResponse]
+    next_cursor: str | None
 
 
 class CapabilityReplacement(StrictModel):
@@ -399,8 +446,8 @@ class LlmAliasResponse(LlmAliasCreate):
     targets: list[AliasTargetWrite]
 
 
-class RegistryPage(BaseModel):
-    data: list
+class LlmAliasPage(BaseModel):
+    data: list[LlmAliasResponse]
     next_cursor: str | None
 
 

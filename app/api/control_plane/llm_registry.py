@@ -186,7 +186,7 @@ async def rotate_target_credential(
         resource_conflict()
 
 
-@router.get("/providers")
+@router.get("/providers", response_model=LlmProviderPage)
 async def list_providers(
     request: Request,
     limit: int = Query(50, ge=1, le=200),
@@ -240,7 +240,7 @@ async def patch_provider(
     )
 
 
-@router.get("/targets")
+@router.get("/targets", response_model=LlmTargetPage)
 async def list_targets(
     request: Request,
     limit: int = Query(50, ge=1, le=200),
@@ -290,7 +290,7 @@ async def patch_target(
     )
 
 
-@router.get("/models")
+@router.get("/models", response_model=LlmModelPage)
 async def list_models(
     request: Request,
     limit: int = Query(50, ge=1, le=200),
@@ -360,7 +360,7 @@ async def replace_capabilities(
     return Response(status_code=200)
 
 
-@router.get("/aliases")
+@router.get("/aliases", response_model=LlmAliasPage)
 async def list_aliases(
     request: Request,
     limit: int = Query(50, ge=1, le=200),

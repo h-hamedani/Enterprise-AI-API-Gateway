@@ -5,7 +5,8 @@ import binascii
 import re
 from dataclasses import dataclass
 
-from fastapi import Request
+from fastapi import Request, Security
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.control_plane.auth import (
     AdminAuthenticationError,
@@ -17,6 +18,8 @@ from app.core.errors import authentication_error
 from app.core.security.credentials import CredentialHasher
 
 _ADMIN_TOKEN_PATTERN = re.compile(r"^adm_[A-Za-z0-9_-]{43}$")
+_ADMIN_BEARER = HTTPBearer(auto_error=False, scheme_name="AdminToken")
+_ADMIN_CREDENTIALS_DEPENDENCY = Security(_ADMIN_BEARER)
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,18 +33,16 @@ def admin_pre_auth_context(request: Request) -> AdminPreAuthContext:
     return AdminPreAuthContext(client_ip=client_ip)
 
 
-def _extract_admin_token(request: Request) -> str:
-    authorization = request.headers.get("Authorization")
-    if authorization is None:
+def _extract_admin_token(
+    credentials: HTTPAuthorizationCredentials | None,
+) -> str:
+    if credentials is None:
         authentication_error()
-    scheme, separator, raw_token = authorization.partition(" ")
-    if (
-        separator != " "
-        or scheme.lower() != "bearer"
-        or not _ADMIN_TOKEN_PATTERN.fullmatch(raw_token)
+    if credentials.scheme.lower() != "bearer" or not _ADMIN_TOKEN_PATTERN.fullmatch(
+        credentials.credentials
     ):
         authentication_error()
-    return raw_token
+    return credentials.credentials
 
 
 def _admin_authenticator(request: Request) -> AdminAuthenticator:
@@ -58,8 +59,11 @@ def _admin_authenticator(request: Request) -> AdminAuthenticator:
     return AdminAuthenticator(CredentialHasher(secret))
 
 
-async def require_admin_context(request: Request) -> AdminContext:
-    raw_token = _extract_admin_token(request)
+async def require_admin_context(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = _ADMIN_CREDENTIALS_DEPENDENCY,
+) -> AdminContext:
+    raw_token = _extract_admin_token(credentials)
     request_id = request.state.request_id
     try:
         return await _admin_authenticator(request).authenticate(
