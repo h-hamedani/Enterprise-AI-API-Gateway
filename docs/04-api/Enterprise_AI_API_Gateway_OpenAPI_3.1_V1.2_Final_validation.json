@@ -3,6 +3,7 @@
   "source_contract": "Enterprise_AI_API_Gateway_API_Specification_V1.2.2_Final.docx",
   "reconciliation_addendum": "Enterprise_AI_API_Gateway_M2.6_Normal_API_Registry_Contract_Reconciliation.md",
   "pricing_reconciliation_addendum": "Enterprise_AI_API_Gateway_M2.7_Model_Pricing_Contract_Reconciliation.md",
+  "admin_read_reconciliation_addendum": "Enterprise_AI_API_Gateway_M2.11R_Admin_Read_List_OpenAPI_Contract_Reconciliation.md",
   "openapi": "3.1.0",
   "result": "PASS",
   "validation_method": {
@@ -14,12 +15,12 @@
   },
   "statistics": {
     "paths": 35,
-    "schemas": 51,
+    "schemas": 57,
     "responses": 20,
     "parameters": 17,
     "security_schemes": 3,
     "operations": 54,
-    "local_refs": 224
+    "local_refs": 236
   },
   "checks": [
     {
@@ -112,6 +113,14 @@
     },
     {
       "check": "Model pricing schemas contain no per_1m or implicit currency/unit representation",
+      "status": "PASS"
+    },
+    {
+      "check": "All M2 paginated Admin reads declare limit, cursor, and typed page schemas",
+      "status": "PASS"
+    },
+    {
+      "check": "M2 Admin operations declare AdminToken only; rate-limit and session routes remain deferred",
       "status": "PASS"
     },
     {

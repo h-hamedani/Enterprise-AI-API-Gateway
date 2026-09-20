@@ -137,7 +137,6 @@ paths:
       summary: List applications
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       parameters:
       - $ref: '#/components/parameters/Limit'
       - $ref: '#/components/parameters/Cursor'
@@ -157,7 +156,6 @@ paths:
       summary: Create application
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       parameters:
       - $ref: '#/components/parameters/OptionalIdempotencyKey'
       - $ref: '#/components/parameters/CsrfToken'
@@ -187,7 +185,6 @@ paths:
       operationId: getApplication
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       responses:
         '200':
           description: Application
@@ -203,7 +200,6 @@ paths:
       operationId: updateApplication
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       requestBody:
         required: true
         content:
@@ -230,7 +226,9 @@ paths:
       operationId: listApiKeys
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: API key metadata page
@@ -250,7 +248,6 @@ paths:
         is rejected as ambiguous credentials.'
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       parameters:
       - $ref: '#/components/parameters/RequiredIdempotencyKey'
       - $ref: '#/components/parameters/CsrfToken'
@@ -287,7 +284,6 @@ paths:
       operationId: revokeApiKey
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       parameters:
       - $ref: '#/components/parameters/ApiKeyId'
       - $ref: '#/components/parameters/CsrfToken'
@@ -311,7 +307,6 @@ paths:
       operationId: listApiKeyPermissions
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       responses:
         '200':
           description: Permission list
@@ -332,7 +327,6 @@ paths:
       operationId: replaceApiKeyPermissions
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       requestBody:
         required: true
         content:
@@ -365,17 +359,22 @@ paths:
       operationId: listServices
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Service list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServicePage'
     post:
       tags:
       - Services
       operationId: createService
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       parameters:
       - $ref: '#/components/parameters/OptionalIdempotencyKey'
       - $ref: '#/components/parameters/CsrfToken'
@@ -405,7 +404,6 @@ paths:
       operationId: getService
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       responses:
         '200':
           description: Service
@@ -421,7 +419,6 @@ paths:
       operationId: updateService
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       requestBody:
         required: true
         content:
@@ -448,7 +445,6 @@ paths:
       operationId: rotateServiceCredential
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       parameters:
       - $ref: '#/components/parameters/ServiceId'
       - $ref: '#/components/parameters/OptionalIdempotencyKey'
@@ -477,10 +473,16 @@ paths:
       operationId: listRoutes
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Route list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoutePage'
     post:
       tags:
       - Routes
@@ -488,7 +490,6 @@ paths:
       summary: Create route after deterministic overlap validation
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       requestBody:
         required: true
         content:
@@ -517,7 +518,6 @@ paths:
       operationId: getRoute
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       responses:
         '200':
           description: Route
@@ -534,7 +534,6 @@ paths:
       summary: Update/enable/disable route after overlap validation
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       requestBody:
         required: true
         content:
@@ -561,17 +560,22 @@ paths:
       operationId: listLlmProviders
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Provider list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LlmProviderPage'
     post:
       tags:
       - LLM Registry
       operationId: createLlmProvider
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       requestBody:
         required: true
         content:
@@ -596,17 +600,22 @@ paths:
       operationId: listLlmTargets
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Target list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LlmTargetPage'
     post:
       tags:
       - LLM Registry
       operationId: createLlmTarget
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       requestBody:
         required: true
         content:
@@ -637,7 +646,6 @@ paths:
         is rejected as ambiguous credentials.'
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       parameters:
       - $ref: '#/components/parameters/TargetId'
       - $ref: '#/components/parameters/RequiredIdempotencyKey'
@@ -663,17 +671,22 @@ paths:
       operationId: listLlmModels
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Model list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LlmModelPage'
     post:
       tags:
       - LLM Registry
       operationId: createLlmModel
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       requestBody:
         required: true
         content:
@@ -698,7 +711,6 @@ paths:
       operationId: replaceModelCapabilities
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       parameters:
       - $ref: '#/components/parameters/ModelId'
       - $ref: '#/components/parameters/CsrfToken'
@@ -729,17 +741,22 @@ paths:
       operationId: listLlmAliases
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Alias list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LlmAliasPage'
     post:
       tags:
       - LLM Registry
       operationId: createLlmAlias
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       requestBody:
         required: true
         content:
@@ -764,7 +781,6 @@ paths:
       operationId: replaceAliasTargets
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       parameters:
       - $ref: '#/components/parameters/AliasId'
       - $ref: '#/components/parameters/CsrfToken'
@@ -871,7 +887,6 @@ paths:
       operationId: listModelPrices
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       responses:
         '200':
           description: Price windows
@@ -881,7 +896,6 @@ paths:
       operationId: createModelPrice
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       requestBody:
         required: true
         content:
@@ -904,7 +918,6 @@ paths:
       operationId: listAuditLogs
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       parameters:
       - $ref: '#/components/parameters/Limit'
       - $ref: '#/components/parameters/Cursor'
@@ -923,7 +936,6 @@ paths:
       operationId: getAdminHealth
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       responses:
         '200':
           description: Detailed component health and degraded-mode visibility
@@ -938,7 +950,6 @@ paths:
       operationId: getConfigVersion
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       responses:
         '200':
           description: Current tenant config version
@@ -962,7 +973,6 @@ paths:
       operationId: getLlmProvider
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       responses:
         '200':
           description: Provider
@@ -981,7 +991,6 @@ paths:
       operationId: updateLlmProvider
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       requestBody:
         required: true
         content:
@@ -1017,7 +1026,6 @@ paths:
       operationId: getLlmModel
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       responses:
         '200':
           description: Model
@@ -1036,7 +1044,6 @@ paths:
       operationId: updateLlmModel
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       requestBody:
         required: true
         content:
@@ -1072,7 +1079,6 @@ paths:
       operationId: getLlmAlias
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       responses:
         '200':
           description: Alias
@@ -1091,7 +1097,6 @@ paths:
       operationId: updateLlmAlias
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       requestBody:
         required: true
         content:
@@ -1148,7 +1153,6 @@ paths:
       operationId: getLlmTarget
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       responses:
         '200':
           description: Provider target metadata including certification and Experimental override; no credential plaintext.
@@ -1164,7 +1168,6 @@ paths:
       operationId: updateLlmTarget
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       description: Updates mutable target fields. When session-authenticated, X-CSRF-Token is mandatory. Certification result
         fields and credentials cannot be arbitrarily set here.
       parameters:
@@ -1283,7 +1286,6 @@ paths:
       operationId: updateModelPrice
       security:
       - AdminToken: []
-      - AdminSessionCookie: []
       parameters:
       - $ref: '#/components/parameters/CsrfToken'
       description: Adjust future/open price window subject to no-overlap exclusion constraint. Session-authenticated mutation
@@ -1362,6 +1364,7 @@ components:
     Cursor:
       name: cursor
       in: query
+      required: false
       description: Opaque server-generated cursor
       schema:
         type: string
@@ -1953,6 +1956,9 @@ components:
           - DISABLED
     ApplicationPage:
       type: object
+      required:
+      - data
+      - next_cursor
       properties:
         data:
           type: array
@@ -2018,6 +2024,9 @@ components:
             description: Raw secret shown once
     ApiKeyPage:
       type: object
+      required:
+      - data
+      - next_cursor
       properties:
         data:
           type: array
@@ -2597,8 +2606,95 @@ components:
           - string
           - 'null'
           format: date-time
+    ServicePage:
+      type: object
+      required:
+      - data
+      - next_cursor
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Service'
+        next_cursor:
+          type:
+          - string
+          - 'null'
+    RoutePage:
+      type: object
+      required:
+      - data
+      - next_cursor
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Route'
+        next_cursor:
+          type:
+          - string
+          - 'null'
+    LlmProviderPage:
+      type: object
+      required:
+      - data
+      - next_cursor
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/LlmProvider'
+        next_cursor:
+          type:
+          - string
+          - 'null'
+    LlmTargetPage:
+      type: object
+      required:
+      - data
+      - next_cursor
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/LlmTarget'
+        next_cursor:
+          type:
+          - string
+          - 'null'
+    LlmModelPage:
+      type: object
+      required:
+      - data
+      - next_cursor
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/LlmModel'
+        next_cursor:
+          type:
+          - string
+          - 'null'
+    LlmAliasPage:
+      type: object
+      required:
+      - data
+      - next_cursor
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/LlmAlias'
+        next_cursor:
+          type:
+          - string
+          - 'null'
     AuditPage:
       type: object
+      required:
+      - data
+      - next_cursor
       properties:
         data:
           type: array
