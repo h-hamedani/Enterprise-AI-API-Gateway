@@ -1,6 +1,9 @@
 {
   "artifact": "Enterprise_AI_API_Gateway_OpenAPI_3.1_V1.2_Final.yaml",
   "source_contract": "Enterprise_AI_API_Gateway_API_Specification_V1.2.2_Final.docx",
+  "reconciliation_addendum": "Enterprise_AI_API_Gateway_M2.6_Normal_API_Registry_Contract_Reconciliation.md",
+  "pricing_reconciliation_addendum": "Enterprise_AI_API_Gateway_M2.7_Model_Pricing_Contract_Reconciliation.md",
+  "admin_read_reconciliation_addendum": "Enterprise_AI_API_Gateway_M2.11R_Admin_Read_List_OpenAPI_Contract_Reconciliation.md",
   "openapi": "3.1.0",
   "result": "PASS",
   "validation_method": {
@@ -12,12 +15,12 @@
   },
   "statistics": {
     "paths": 35,
-    "schemas": 51,
+    "schemas": 57,
     "responses": 20,
     "parameters": 17,
     "security_schemes": 3,
     "operations": 54,
-    "local_refs": 224
+    "local_refs": 236
   },
   "checks": [
     {
@@ -90,6 +93,34 @@
     },
     {
       "check": "Service slug cannot be patched",
+      "status": "PASS"
+    },
+    {
+      "check": "Service schemas expose five physical phase-specific timeouts and no generic timeout_ms",
+      "status": "PASS"
+    },
+    {
+      "check": "Route schemas use one scalar method and no methods array",
+      "status": "PASS"
+    },
+    {
+      "check": "Route schemas expose upstream_path_template and header_policy",
+      "status": "PASS"
+    },
+    {
+      "check": "ModelPriceCreate requires the canonical physical economic fields",
+      "status": "PASS"
+    },
+    {
+      "check": "Model pricing schemas contain no per_1m or implicit currency/unit representation",
+      "status": "PASS"
+    },
+    {
+      "check": "All M2 paginated Admin reads declare limit, cursor, and typed page schemas",
+      "status": "PASS"
+    },
+    {
+      "check": "M2 Admin operations declare AdminToken only; rate-limit and session routes remain deferred",
       "status": "PASS"
     },
     {

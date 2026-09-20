@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import create_engine, insert, inspect
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
+from app.control_plane.permissions import PermissionValidationError, RateScopeValidator
 from app.core.config import get_settings
 from app.persistence.models import Base
 from app.persistence.models.operations import RateLimitPolicy
@@ -165,3 +166,41 @@ def test_rate_policy_indexes_exist(db_connection):
     }
     assert "ix_rate_limit_policies_scope" in indexes
     assert indexes["uq_rate_limit_policy_one_enabled"]["unique"] is True
+
+
+def test_admin_token_rate_scope_requires_same_tenant_token(db_connection):
+    timestamp = datetime.now(UTC)
+    tenant_a = add_tenant(db_connection, "rate-admin-token-a")
+    tenant_b = add_tenant(db_connection, "rate-admin-token-b")
+    user_id, token_id = uuid4(), uuid4()
+    db_connection.execute(
+        insert(Base.metadata.tables["admin_users"]).values(
+            id=user_id,
+            tenant_id=tenant_a,
+            name="rate-admin",
+            status="ACTIVE",
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+    )
+    db_connection.execute(
+        insert(Base.metadata.tables["admin_tokens"]).values(
+            id=token_id,
+            tenant_id=tenant_a,
+            admin_user_id=user_id,
+            token_prefix="adm_scope12",
+            token_hash=f"scope-{token_id}",
+            status="ACTIVE",
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+    )
+
+    validator = RateScopeValidator()
+    validator.validate_admin_token(
+        db_connection, tenant_id=tenant_a, admin_token_id=token_id
+    )
+    with pytest.raises(PermissionValidationError):
+        validator.validate_admin_token(
+            db_connection, tenant_id=tenant_b, admin_token_id=token_id
+        )
