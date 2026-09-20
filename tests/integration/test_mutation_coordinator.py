@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -9,6 +11,7 @@ from sqlalchemy import create_engine, func, insert, select
 
 from app.control_plane.application_api_keys import create_control_plane_admin_services
 from app.control_plane.auth import AdminContext
+from app.control_plane.config_publish import RedisConfigInvalidationPublisher
 from app.control_plane.mutation_coordinator import (
     AuditAction,
     MutationCoordinationError,
@@ -323,3 +326,68 @@ def test_api_key_idempotent_replay_does_not_repeat_audit_or_version(
     assert api_key_count == 1
     assert audit_count == 1
     assert version == 1
+
+
+def test_publication_observes_committed_postgresql_state(coordinator_fixture):
+    engine, context = coordinator_fixture
+    application_id = uuid4()
+    timestamp = datetime.now(UTC)
+
+    with engine.begin() as connection:
+        connection.execute(
+            insert(Base.metadata.tables["applications"]).values(
+                id=application_id,
+                tenant_id=context.tenant_id,
+                name="visible-after-commit",
+                status="ACTIVE",
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+        )
+        committed = MutationCoordinator().record_success(
+            connection,
+            context=context,
+            action=AuditAction.APPLICATION_CREATE,
+            resource_type=ResourceType.APPLICATION,
+            resource_id=application_id,
+        )
+
+    class CommitObservingRedis:
+        observed = None
+
+        async def publish(self, channel, payload):
+            with engine.connect() as observer:
+                self.observed = (
+                    observer.scalar(
+                        select(func.count())
+                        .select_from(Base.metadata.tables["applications"])
+                        .where(
+                            Base.metadata.tables["applications"].c.id == application_id
+                        )
+                    ),
+                    observer.scalar(
+                        select(Base.metadata.tables["config_versions"].c.version).where(
+                            Base.metadata.tables["config_versions"].c.tenant_id
+                            == context.tenant_id
+                        )
+                    ),
+                    json.loads(payload),
+                )
+            return 1
+
+    redis = CommitObservingRedis()
+    assert asyncio.run(
+        RedisConfigInvalidationPublisher(redis).publish(
+            committed, request_id=context.request_id
+        )
+    )
+    assert redis.observed == (
+        1,
+        committed.version,
+        {
+            "tenant_id": str(context.tenant_id),
+            "resource_type": "APPLICATION",
+            "resource_id": str(application_id),
+            "version": committed.version,
+        },
+    )

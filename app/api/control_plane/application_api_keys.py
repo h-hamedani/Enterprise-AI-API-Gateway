@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.exc import IntegrityError
 
+from app.api.control_plane.invalidation import publish_committed_mutation
 from app.api.dependencies import require_admin_context
 from app.api.idempotency import (
     API_KEY_CREATE_POLICY,
@@ -116,6 +117,7 @@ async def create_application(
 ):
     raw_key = idempotency_key(request, APPLICATION_CREATE_POLICY)
     try:
+        committed = None
         async with request.app.state.db_engine.begin() as connection:
             result = await connection.run_sync(
                 lambda sync: _services(request).applications.create(
@@ -127,7 +129,7 @@ async def create_application(
                 )
             )
             if not result.replayed:
-                await connection.run_sync(
+                committed = await connection.run_sync(
                     lambda sync: mutation_coordinator.record_success(
                         sync,
                         context=context,
@@ -136,6 +138,10 @@ async def create_application(
                         resource_id=response_resource_id(result.response),
                     )
                 )
+        if committed is not None:
+            await publish_committed_mutation(
+                request, committed, request_id=context.request_id
+            )
         return replay_response(result.response)
     except _HANDLED_ERRORS as error:
         _map_service_error(error)
@@ -177,7 +183,7 @@ async def update_application(
                     patch=payload,
                 )
             )
-            await connection.run_sync(
+            committed = await connection.run_sync(
                 lambda sync: mutation_coordinator.record_success(
                     sync,
                     context=context,
@@ -186,7 +192,10 @@ async def update_application(
                     resource_id=application_id,
                 )
             )
-            return result
+        await publish_committed_mutation(
+            request, committed, request_id=context.request_id
+        )
+        return result
     except _HANDLED_ERRORS as error:
         _map_service_error(error)
 
@@ -222,6 +231,7 @@ async def create_api_key(
     if raw_key is None:
         invalid_request(param="Idempotency-Key")
     try:
+        committed = None
         async with request.app.state.db_engine.begin() as connection:
             result = await connection.run_sync(
                 lambda sync: _services(request).api_keys.create(
@@ -233,7 +243,7 @@ async def create_api_key(
                 )
             )
             if not result.replayed:
-                await connection.run_sync(
+                committed = await connection.run_sync(
                     lambda sync: mutation_coordinator.record_success(
                         sync,
                         context=context,
@@ -242,6 +252,10 @@ async def create_api_key(
                         resource_id=response_resource_id(result.response),
                     )
                 )
+        if committed is not None:
+            await publish_committed_mutation(
+                request, committed, request_id=context.request_id
+            )
         return replay_response(result.response)
     except _HANDLED_ERRORS as error:
         _map_service_error(error)
@@ -265,7 +279,7 @@ async def revoke_api_key(
                     api_key_id=api_key_id,
                 )
             )
-            await connection.run_sync(
+            committed = await connection.run_sync(
                 lambda sync: mutation_coordinator.record_success(
                     sync,
                     context=context,
@@ -274,6 +288,9 @@ async def revoke_api_key(
                     resource_id=api_key_id,
                 )
             )
-            return result
+        await publish_committed_mutation(
+            request, committed, request_id=context.request_id
+        )
+        return result
     except _HANDLED_ERRORS as error:
         _map_service_error(error)

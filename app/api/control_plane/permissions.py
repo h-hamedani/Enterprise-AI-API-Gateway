@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.exc import IntegrityError
 
+from app.api.control_plane.invalidation import publish_committed_mutation
 from app.api.dependencies import require_admin_context
 from app.control_plane.application_api_keys import ControlPlaneAdminServices
 from app.control_plane.auth import AdminContext
@@ -66,7 +67,7 @@ async def replace_api_key_permissions(
 ) -> Response:
     try:
         async with request.app.state.db_engine.begin() as connection:
-            await connection.run_sync(
+            committed = await connection.run_sync(
                 lambda sync: _services(request).permissions.replace(
                     sync,
                     tenant_id=context.tenant_id,
@@ -83,6 +84,9 @@ async def replace_api_key_permissions(
                     resource_id=api_key_id,
                 )
             )
+        await publish_committed_mutation(
+            request, committed, request_id=context.request_id
+        )
         return Response(status_code=200)
     except (PermissionApiKeyNotFoundError, PermissionTargetNotFoundError):
         resource_not_found()

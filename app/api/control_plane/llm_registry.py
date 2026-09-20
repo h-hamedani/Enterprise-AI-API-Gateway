@@ -3,6 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.exc import IntegrityError
 
+from app.api.control_plane.invalidation import publish_committed_mutation
 from app.api.dependencies import require_admin_context
 from app.api.idempotency import (
     LLM_CREDENTIAL_ROTATION_POLICY,
@@ -87,7 +88,7 @@ async def _write(request, context, action, resource_type, fn, resource_id=None):
         async with request.app.state.db_engine.begin() as c:
             result = await c.run_sync(fn)
             mutation_resource_id = resource_id or result.id
-            await c.run_sync(
+            committed = await c.run_sync(
                 lambda sync: mutation_coordinator.record_success(
                     sync,
                     context=context,
@@ -96,7 +97,10 @@ async def _write(request, context, action, resource_type, fn, resource_id=None):
                     resource_id=mutation_resource_id,
                 )
             )
-            return result
+        await publish_committed_mutation(
+            request, committed, request_id=context.request_id
+        )
+        return result
     except (
         LlmRegistryNotFoundError,
         LlmRegistryConflictError,
@@ -111,7 +115,7 @@ async def _write_price(request, context, action, fn, resource_id=None):
         async with request.app.state.db_engine.begin() as connection:
             result = await connection.run_sync(fn)
             mutation_resource_id = resource_id or result.id
-            await connection.run_sync(
+            committed = await connection.run_sync(
                 lambda sync: mutation_coordinator.record_success(
                     sync,
                     context=context,
@@ -120,7 +124,10 @@ async def _write_price(request, context, action, fn, resource_id=None):
                     resource_id=mutation_resource_id,
                 )
             )
-            return result
+        await publish_committed_mutation(
+            request, committed, request_id=context.request_id
+        )
+        return result
     except (
         LlmRegistryNotFoundError,
         PriceWindowConflictError,
@@ -139,6 +146,7 @@ async def rotate_target_credential(
 ):
     raw_key = idempotency_key(request, LLM_CREDENTIAL_ROTATION_POLICY)
     try:
+        committed = None
         async with request.app.state.db_engine.begin() as connection:
             result = await connection.run_sync(
                 lambda c: _svc(request).rotate_credential(
@@ -151,7 +159,7 @@ async def rotate_target_credential(
                 )
             )
             if not result.replayed:
-                await connection.run_sync(
+                committed = await connection.run_sync(
                     lambda sync: mutation_coordinator.record_success(
                         sync,
                         context=context,
@@ -160,6 +168,10 @@ async def rotate_target_credential(
                         resource_id=target_id,
                     )
                 )
+        if committed is not None:
+            await publish_committed_mutation(
+                request, committed, request_id=context.request_id
+            )
         return replay_response(result.response)
     except LlmRegistryNotFoundError:
         resource_not_found()

@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.exc import IntegrityError
 
+from app.api.control_plane.invalidation import publish_committed_mutation
 from app.api.dependencies import require_admin_context
 from app.api.idempotency import (
     IdempotencyPolicy,
@@ -106,6 +107,7 @@ async def create_service(
 ):
     raw_key = idempotency_key(request, SERVICE_CREATE_POLICY)
     try:
+        committed = None
         async with request.app.state.db_engine.begin() as connection:
             result = await connection.run_sync(
                 lambda sync: _registry(request).create_service(
@@ -117,7 +119,7 @@ async def create_service(
                 )
             )
             if not result.replayed:
-                await connection.run_sync(
+                committed = await connection.run_sync(
                     lambda sync: mutation_coordinator.record_success(
                         sync,
                         context=context,
@@ -126,6 +128,10 @@ async def create_service(
                         resource_id=response_resource_id(result.response),
                     )
                 )
+        if committed is not None:
+            await publish_committed_mutation(
+                request, committed, request_id=context.request_id
+            )
         return replay_response(result.response)
     except (
         RegistryConflictError,
@@ -169,7 +175,7 @@ async def patch_service(
                     patch=payload,
                 )
             )
-            await connection.run_sync(
+            committed = await connection.run_sync(
                 lambda sync: mutation_coordinator.record_success(
                     sync,
                     context=context,
@@ -178,7 +184,10 @@ async def patch_service(
                     resource_id=service_id,
                 )
             )
-            return result
+        await publish_committed_mutation(
+            request, committed, request_id=context.request_id
+        )
+        return result
     except (RegistryResourceNotFoundError, IntegrityError) as error:
         _map_error(error)
 
@@ -192,6 +201,7 @@ async def put_service_credential(
 ):
     raw_key = idempotency_key(request, CREDENTIAL_PUT_POLICY)
     try:
+        committed = None
         async with request.app.state.db_engine.begin() as connection:
             result = await connection.run_sync(
                 lambda sync: _registry(request).put_credential(
@@ -204,7 +214,7 @@ async def put_service_credential(
                 )
             )
             if not result.replayed:
-                await connection.run_sync(
+                committed = await connection.run_sync(
                     lambda sync: mutation_coordinator.record_success(
                         sync,
                         context=context,
@@ -213,6 +223,10 @@ async def put_service_credential(
                         resource_id=service_id,
                     )
                 )
+        if committed is not None:
+            await publish_committed_mutation(
+                request, committed, request_id=context.request_id
+            )
         return replay_response(result.response)
     except (
         RegistryResourceNotFoundError,
@@ -253,7 +267,7 @@ async def create_route(
                     sync, tenant_id=context.tenant_id, request=payload
                 )
             )
-            await connection.run_sync(
+            committed = await connection.run_sync(
                 lambda sync: mutation_coordinator.record_success(
                     sync,
                     context=context,
@@ -262,7 +276,10 @@ async def create_route(
                     resource_id=result.id,
                 )
             )
-            return result
+        await publish_committed_mutation(
+            request, committed, request_id=context.request_id
+        )
+        return result
     except (RegistryResourceNotFoundError, IntegrityError) as error:
         _map_error(error)
 
@@ -301,7 +318,7 @@ async def patch_route(
                     patch=payload,
                 )
             )
-            await connection.run_sync(
+            committed = await connection.run_sync(
                 lambda sync: mutation_coordinator.record_success(
                     sync,
                     context=context,
@@ -310,6 +327,9 @@ async def patch_route(
                     resource_id=route_id,
                 )
             )
-            return result
+        await publish_committed_mutation(
+            request, committed, request_id=context.request_id
+        )
+        return result
     except (RegistryResourceNotFoundError, IntegrityError) as error:
         _map_error(error)

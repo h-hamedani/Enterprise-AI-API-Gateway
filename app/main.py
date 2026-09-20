@@ -19,6 +19,7 @@ from app.api.control_plane import (
 from app.api.control_plane import router as control_plane_router
 from app.api.health import router as health_router
 from app.control_plane.application_api_keys import create_control_plane_admin_services
+from app.control_plane.config_publish import RedisConfigInvalidationPublisher
 from app.control_plane.llm_registry import create_llm_registry_service
 from app.control_plane.normal_api_registry import create_normal_api_registry_service
 from app.core.config import get_settings
@@ -45,6 +46,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.db_engine = db_engine
     app.state.redis = redis
+    app.state.config_invalidation_publisher = RedisConfigInvalidationPublisher(redis)
     app.state.runtime_mode = "NORMAL"
     if (
         settings.credential_hmac_secret is not None
