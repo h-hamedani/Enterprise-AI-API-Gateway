@@ -17,6 +17,11 @@ from app.control_plane.llm_registry import (
     LlmRegistryNotFoundError,
     PriceWindowConflictError,
 )
+from app.control_plane.mutation_coordinator import (
+    AuditAction,
+    ResourceType,
+    mutation_coordinator,
+)
 from app.core.errors import (
     GatewayHttpError,
     invalid_request,
@@ -77,10 +82,21 @@ async def _read(request, fn):
         _map(e)
 
 
-async def _write(request, fn):
+async def _write(request, context, action, resource_type, fn, resource_id=None):
     try:
         async with request.app.state.db_engine.begin() as c:
-            return await c.run_sync(fn)
+            result = await c.run_sync(fn)
+            mutation_resource_id = resource_id or result.id
+            await c.run_sync(
+                lambda sync: mutation_coordinator.record_success(
+                    sync,
+                    context=context,
+                    action=action,
+                    resource_type=resource_type,
+                    resource_id=mutation_resource_id,
+                )
+            )
+            return result
     except (
         LlmRegistryNotFoundError,
         LlmRegistryConflictError,
@@ -90,10 +106,21 @@ async def _write(request, fn):
         _map(e)
 
 
-async def _write_price(request, fn):
+async def _write_price(request, context, action, fn, resource_id=None):
     try:
         async with request.app.state.db_engine.begin() as connection:
-            return await connection.run_sync(fn)
+            result = await connection.run_sync(fn)
+            mutation_resource_id = resource_id or result.id
+            await connection.run_sync(
+                lambda sync: mutation_coordinator.record_success(
+                    sync,
+                    context=context,
+                    action=action,
+                    resource_type=ResourceType.MODEL_PRICE,
+                    resource_id=mutation_resource_id,
+                )
+            )
+            return result
     except (
         LlmRegistryNotFoundError,
         PriceWindowConflictError,
@@ -123,6 +150,16 @@ async def rotate_target_credential(
                     raw_idempotency_key=raw_key,
                 )
             )
+            if not result.replayed:
+                await connection.run_sync(
+                    lambda sync: mutation_coordinator.record_success(
+                        sync,
+                        context=context,
+                        action=AuditAction.LLM_TARGET_CREDENTIAL_ROTATE,
+                        resource_type=ResourceType.LLM_TARGET,
+                        resource_id=target_id,
+                    )
+                )
         return replay_response(result.response)
     except LlmRegistryNotFoundError:
         resource_not_found()
@@ -155,7 +192,11 @@ async def create_provider(
     payload: LlmProviderCreate, request: Request, context: AdminContext = AUTH
 ):
     return await _write(
-        request, lambda c: _svc(request).create_provider(c, context.tenant_id, payload)
+        request,
+        context,
+        AuditAction.LLM_PROVIDER_CREATE,
+        ResourceType.LLM_PROVIDER,
+        lambda c: _svc(request).create_provider(c, context.tenant_id, payload),
     )
 
 
@@ -177,9 +218,13 @@ async def patch_provider(
 ):
     return await _write(
         request,
+        context,
+        AuditAction.LLM_PROVIDER_UPDATE,
+        ResourceType.LLM_PROVIDER,
         lambda c: _svc(request).patch_provider(
             c, context.tenant_id, provider_id, payload
         ),
+        provider_id,
     )
 
 
@@ -201,7 +246,11 @@ async def create_target(
     payload: LlmTargetCreate, request: Request, context: AdminContext = AUTH
 ):
     return await _write(
-        request, lambda c: _svc(request).create_target(c, context.tenant_id, payload)
+        request,
+        context,
+        AuditAction.LLM_TARGET_CREATE,
+        ResourceType.LLM_TARGET,
+        lambda c: _svc(request).create_target(c, context.tenant_id, payload),
     )
 
 
@@ -221,7 +270,11 @@ async def patch_target(
 ):
     return await _write(
         request,
+        context,
+        AuditAction.LLM_TARGET_UPDATE,
+        ResourceType.LLM_TARGET,
         lambda c: _svc(request).patch_target(c, context.tenant_id, target_id, payload),
+        target_id,
     )
 
 
@@ -243,7 +296,11 @@ async def create_model(
     payload: LlmModelCreate, request: Request, context: AdminContext = AUTH
 ):
     return await _write(
-        request, lambda c: _svc(request).create_model(c, context.tenant_id, payload)
+        request,
+        context,
+        AuditAction.LLM_MODEL_CREATE,
+        ResourceType.LLM_MODEL,
+        lambda c: _svc(request).create_model(c, context.tenant_id, payload),
     )
 
 
@@ -263,7 +320,11 @@ async def patch_model(
 ):
     return await _write(
         request,
+        context,
+        AuditAction.LLM_MODEL_UPDATE,
+        ResourceType.LLM_MODEL,
         lambda c: _svc(request).patch_model(c, context.tenant_id, model_id, payload),
+        model_id,
     )
 
 
@@ -276,9 +337,13 @@ async def replace_capabilities(
 ):
     await _write(
         request,
+        context,
+        AuditAction.LLM_MODEL_CAPABILITIES_REPLACE,
+        ResourceType.LLM_MODEL,
         lambda c: _svc(request).replace_capabilities(
             c, context.tenant_id, model_id, payload.capabilities
         ),
+        model_id,
     )
     return Response(status_code=200)
 
@@ -301,7 +366,11 @@ async def create_alias(
     payload: LlmAliasCreate, request: Request, context: AdminContext = AUTH
 ):
     return await _write(
-        request, lambda c: _svc(request).create_alias(c, context.tenant_id, payload)
+        request,
+        context,
+        AuditAction.LLM_ALIAS_CREATE,
+        ResourceType.LLM_ALIAS,
+        lambda c: _svc(request).create_alias(c, context.tenant_id, payload),
     )
 
 
@@ -321,7 +390,11 @@ async def patch_alias(
 ):
     return await _write(
         request,
+        context,
+        AuditAction.LLM_ALIAS_UPDATE,
+        ResourceType.LLM_ALIAS,
         lambda c: _svc(request).patch_alias(c, context.tenant_id, alias_id, payload),
+        alias_id,
     )
 
 
@@ -334,9 +407,13 @@ async def replace_alias_targets(
 ):
     await _write(
         request,
+        context,
+        AuditAction.LLM_ALIAS_TARGETS_REPLACE,
+        ResourceType.LLM_ALIAS,
         lambda c: _svc(request).replace_alias_targets(
             c, context.tenant_id, alias_id, payload.targets
         ),
+        alias_id,
     )
     return Response(status_code=200)
 
@@ -359,6 +436,8 @@ async def create_price(
 ):
     return await _write_price(
         request,
+        context,
+        AuditAction.MODEL_PRICE_CREATE,
         lambda c: _svc(request).create_price(c, context.tenant_id, model_id, payload),
     )
 
@@ -375,5 +454,8 @@ async def patch_price(
 ):
     return await _write_price(
         request,
+        context,
+        AuditAction.MODEL_PRICE_UPDATE,
         lambda c: _svc(request).patch_price(c, context.tenant_id, price_id, payload),
+        price_id,
     )

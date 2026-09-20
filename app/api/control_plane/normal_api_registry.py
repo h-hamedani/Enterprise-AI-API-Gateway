@@ -13,6 +13,12 @@ from app.api.idempotency import (
     replay_response,
 )
 from app.control_plane.auth import AdminContext
+from app.control_plane.mutation_coordinator import (
+    AuditAction,
+    ResourceType,
+    mutation_coordinator,
+    response_resource_id,
+)
 from app.control_plane.normal_api_registry import (
     NormalApiRegistryAdminService,
     RegistryConflictError,
@@ -110,6 +116,16 @@ async def create_service(
                     raw_idempotency_key=raw_key,
                 )
             )
+            if not result.replayed:
+                await connection.run_sync(
+                    lambda sync: mutation_coordinator.record_success(
+                        sync,
+                        context=context,
+                        action=AuditAction.SERVICE_CREATE,
+                        resource_type=ResourceType.SERVICE,
+                        resource_id=response_resource_id(result.response),
+                    )
+                )
         return replay_response(result.response)
     except (
         RegistryConflictError,
@@ -145,7 +161,7 @@ async def patch_service(
 ) -> ServiceResponse:
     try:
         async with request.app.state.db_engine.begin() as connection:
-            return await connection.run_sync(
+            result = await connection.run_sync(
                 lambda sync: _registry(request).patch_service(
                     sync,
                     tenant_id=context.tenant_id,
@@ -153,6 +169,16 @@ async def patch_service(
                     patch=payload,
                 )
             )
+            await connection.run_sync(
+                lambda sync: mutation_coordinator.record_success(
+                    sync,
+                    context=context,
+                    action=AuditAction.SERVICE_UPDATE,
+                    resource_type=ResourceType.SERVICE,
+                    resource_id=service_id,
+                )
+            )
+            return result
     except (RegistryResourceNotFoundError, IntegrityError) as error:
         _map_error(error)
 
@@ -177,6 +203,16 @@ async def put_service_credential(
                     raw_idempotency_key=raw_key,
                 )
             )
+            if not result.replayed:
+                await connection.run_sync(
+                    lambda sync: mutation_coordinator.record_success(
+                        sync,
+                        context=context,
+                        action=AuditAction.SERVICE_CREDENTIAL_REPLACE,
+                        resource_type=ResourceType.SERVICE,
+                        resource_id=service_id,
+                    )
+                )
         return replay_response(result.response)
     except (
         RegistryResourceNotFoundError,
@@ -212,11 +248,21 @@ async def create_route(
 ) -> RouteResponse:
     try:
         async with request.app.state.db_engine.begin() as connection:
-            return await connection.run_sync(
+            result = await connection.run_sync(
                 lambda sync: _registry(request).create_route(
                     sync, tenant_id=context.tenant_id, request=payload
                 )
             )
+            await connection.run_sync(
+                lambda sync: mutation_coordinator.record_success(
+                    sync,
+                    context=context,
+                    action=AuditAction.ROUTE_CREATE,
+                    resource_type=ResourceType.ROUTE,
+                    resource_id=result.id,
+                )
+            )
+            return result
     except (RegistryResourceNotFoundError, IntegrityError) as error:
         _map_error(error)
 
@@ -247,7 +293,7 @@ async def patch_route(
 ) -> RouteResponse:
     try:
         async with request.app.state.db_engine.begin() as connection:
-            return await connection.run_sync(
+            result = await connection.run_sync(
                 lambda sync: _registry(request).patch_route(
                     sync,
                     tenant_id=context.tenant_id,
@@ -255,5 +301,15 @@ async def patch_route(
                     patch=payload,
                 )
             )
+            await connection.run_sync(
+                lambda sync: mutation_coordinator.record_success(
+                    sync,
+                    context=context,
+                    action=AuditAction.ROUTE_UPDATE,
+                    resource_type=ResourceType.ROUTE,
+                    resource_id=route_id,
+                )
+            )
+            return result
     except (RegistryResourceNotFoundError, IntegrityError) as error:
         _map_error(error)

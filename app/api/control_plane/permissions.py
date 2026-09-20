@@ -8,6 +8,11 @@ from sqlalchemy.exc import IntegrityError
 from app.api.dependencies import require_admin_context
 from app.control_plane.application_api_keys import ControlPlaneAdminServices
 from app.control_plane.auth import AdminContext
+from app.control_plane.mutation_coordinator import (
+    AuditAction,
+    ResourceType,
+    mutation_coordinator,
+)
 from app.control_plane.permissions import (
     PermissionApiKeyNotFoundError,
     PermissionConflictError,
@@ -67,6 +72,15 @@ async def replace_api_key_permissions(
                     tenant_id=context.tenant_id,
                     api_key_id=api_key_id,
                     permissions=payload.permissions,
+                )
+            )
+            await connection.run_sync(
+                lambda sync: mutation_coordinator.record_success(
+                    sync,
+                    context=context,
+                    action=AuditAction.API_KEY_PERMISSIONS_REPLACE,
+                    resource_type=ResourceType.API_KEY,
+                    resource_id=api_key_id,
                 )
             )
         return Response(status_code=200)

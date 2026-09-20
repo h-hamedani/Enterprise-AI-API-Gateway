@@ -18,6 +18,12 @@ from app.control_plane.application_api_keys import (
     ResourceNotFoundError,
 )
 from app.control_plane.auth import AdminContext
+from app.control_plane.mutation_coordinator import (
+    AuditAction,
+    ResourceType,
+    mutation_coordinator,
+    response_resource_id,
+)
 from app.core.errors import (
     GatewayHttpError,
     invalid_request,
@@ -120,6 +126,16 @@ async def create_application(
                     raw_idempotency_key=raw_key,
                 )
             )
+            if not result.replayed:
+                await connection.run_sync(
+                    lambda sync: mutation_coordinator.record_success(
+                        sync,
+                        context=context,
+                        action=AuditAction.APPLICATION_CREATE,
+                        resource_type=ResourceType.APPLICATION,
+                        resource_id=response_resource_id(result.response),
+                    )
+                )
         return replay_response(result.response)
     except _HANDLED_ERRORS as error:
         _map_service_error(error)
@@ -153,7 +169,7 @@ async def update_application(
 ) -> ApplicationResponse:
     try:
         async with request.app.state.db_engine.begin() as connection:
-            return await connection.run_sync(
+            result = await connection.run_sync(
                 lambda sync: _services(request).applications.update(
                     sync,
                     tenant_id=context.tenant_id,
@@ -161,6 +177,16 @@ async def update_application(
                     patch=payload,
                 )
             )
+            await connection.run_sync(
+                lambda sync: mutation_coordinator.record_success(
+                    sync,
+                    context=context,
+                    action=AuditAction.APPLICATION_UPDATE,
+                    resource_type=ResourceType.APPLICATION,
+                    resource_id=application_id,
+                )
+            )
+            return result
     except _HANDLED_ERRORS as error:
         _map_service_error(error)
 
@@ -206,6 +232,16 @@ async def create_api_key(
                     raw_idempotency_key=raw_key,
                 )
             )
+            if not result.replayed:
+                await connection.run_sync(
+                    lambda sync: mutation_coordinator.record_success(
+                        sync,
+                        context=context,
+                        action=AuditAction.API_KEY_CREATE,
+                        resource_type=ResourceType.API_KEY,
+                        resource_id=response_resource_id(result.response),
+                    )
+                )
         return replay_response(result.response)
     except _HANDLED_ERRORS as error:
         _map_service_error(error)
@@ -222,12 +258,22 @@ async def revoke_api_key(
 ) -> ApiKeyMetadata:
     try:
         async with request.app.state.db_engine.begin() as connection:
-            return await connection.run_sync(
+            result = await connection.run_sync(
                 lambda sync: _services(request).api_keys.revoke(
                     sync,
                     tenant_id=context.tenant_id,
                     api_key_id=api_key_id,
                 )
             )
+            await connection.run_sync(
+                lambda sync: mutation_coordinator.record_success(
+                    sync,
+                    context=context,
+                    action=AuditAction.API_KEY_REVOKE,
+                    resource_type=ResourceType.API_KEY,
+                    resource_id=api_key_id,
+                )
+            )
+            return result
     except _HANDLED_ERRORS as error:
         _map_service_error(error)
