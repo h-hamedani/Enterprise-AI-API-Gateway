@@ -10,10 +10,16 @@ from fastapi import FastAPI
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from app.api.control_plane import normal_api_registry_router, permission_router
+from app.api.control_plane import (
+    llm_registry_router,
+    normal_api_registry_router,
+    permission_router,
+    price_router,
+)
 from app.api.control_plane import router as control_plane_router
 from app.api.health import router as health_router
 from app.control_plane.application_api_keys import create_control_plane_admin_services
+from app.control_plane.llm_registry import create_llm_registry_service
 from app.control_plane.normal_api_registry import create_normal_api_registry_service
 from app.core.config import get_settings
 from app.core.errors import install_error_handlers
@@ -62,6 +68,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             },
             current_encryption_key_version=settings.encryption_current_key_version,
         )
+        app.state.llm_registry_service = create_llm_registry_service(
+            base64.b64decode(settings.idempotency_hmac_secret)
+        )
 
     try:
         yield
@@ -85,6 +94,8 @@ def create_app() -> FastAPI:
     app.include_router(control_plane_router)
     app.include_router(permission_router)
     app.include_router(normal_api_registry_router)
+    app.include_router(llm_registry_router)
+    app.include_router(price_router)
 
     return app
 

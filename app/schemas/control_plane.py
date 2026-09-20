@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
@@ -233,3 +234,212 @@ class CredentialMetadata(BaseModel):
     secret_type: Literal["NONE", "STATIC_BEARER", "STATIC_HEADER"]
     created_at: datetime
     rotated_at: datetime | None
+
+
+ProviderTypeValue = Literal["OPENAI", "ANTHROPIC", "VLLM", "GENERIC_OPENAI_COMPAT"]
+CapabilityValue = Literal["CHAT", "STREAMING", "TOOLS", "EMBEDDINGS"]
+
+
+class LlmProviderCreate(StrictModel):
+    name: str = Field(min_length=1, max_length=160)
+    provider_type: ProviderTypeValue
+    status: ServiceStatus = "ACTIVE"
+
+
+class LlmProviderPatch(StrictModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    status: ServiceStatus | None = None
+
+    @model_validator(mode="after")
+    def validate_patch(self):
+        if not self.model_fields_set or any(
+            getattr(self, field) is None for field in self.model_fields_set
+        ):
+            raise ValueError("At least one non-null field is required.")
+        return self
+
+
+class LlmProviderResponse(LlmProviderCreate):
+    id: UUID
+
+
+class LlmTargetCreate(StrictModel):
+    provider_id: UUID
+    name: str = Field(min_length=1, max_length=160)
+    base_url: str = Field(min_length=1, max_length=2048)
+    timeout_ms: int = Field(default=30000, ge=1)
+    max_concurrent_requests: int | None = Field(default=None, ge=1)
+    status: ServiceStatus = "ACTIVE"
+    pre_output_idle_timeout_ms: int = Field(default=20000, ge=1000)
+    pre_output_budget_ms: int = Field(default=30000, ge=1001, le=120000)
+    post_output_idle_timeout_ms: int = Field(default=60000, ge=1000)
+    allow_uncertified_runtime: bool = False
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, value: str) -> str:
+        ServiceCreate.validate_base_url(value)
+        return value
+
+    @model_validator(mode="after")
+    def validate_budget(self):
+        if self.pre_output_budget_ms <= self.pre_output_idle_timeout_ms:
+            raise ValueError("pre_output_budget_ms must exceed idle timeout.")
+        return self
+
+
+class LlmTargetPatch(StrictModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    timeout_ms: int | None = Field(default=None, ge=1)
+    pre_output_idle_timeout_ms: int | None = Field(default=None, ge=1000)
+    pre_output_budget_ms: int | None = Field(default=None, ge=1001, le=120000)
+    post_output_idle_timeout_ms: int | None = Field(default=None, ge=1000)
+    max_concurrent_requests: int | None = Field(default=None, ge=1)
+    status: ServiceStatus | None = None
+    allow_uncertified_runtime: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_patch(self):
+        if not self.model_fields_set:
+            raise ValueError("At least one field is required.")
+        nullable = {"max_concurrent_requests"}
+        if any(
+            getattr(self, field) is None for field in self.model_fields_set - nullable
+        ):
+            raise ValueError("Supplied field cannot be null.")
+        return self
+
+
+class LlmTargetResponse(LlmTargetCreate):
+    id: UUID
+    certification_status: Literal["UNVERIFIED", "CERTIFIED", "FAILED"]
+    certified_at: datetime | None = None
+    certification_metadata: dict | None = None
+
+
+class LlmModelCreate(StrictModel):
+    provider_target_id: UUID
+    provider_model_name: str = Field(min_length=1, max_length=255)
+    display_name: str | None = Field(default=None, max_length=200)
+    status: ServiceStatus = "ACTIVE"
+
+
+class LlmModelPatch(StrictModel):
+    display_name: str | None = Field(default=None, max_length=200)
+    status: ServiceStatus | None = None
+
+    @model_validator(mode="after")
+    def validate_patch(self):
+        if not self.model_fields_set:
+            raise ValueError("At least one field is required.")
+        if "status" in self.model_fields_set and self.status is None:
+            raise ValueError("status cannot be null.")
+        return self
+
+
+class LlmModelResponse(LlmModelCreate):
+    id: UUID
+    capabilities: list[CapabilityValue]
+
+
+class CapabilityReplacement(StrictModel):
+    capabilities: list[CapabilityValue]
+
+    @field_validator("capabilities")
+    @classmethod
+    def unique_capabilities(cls, value):
+        if len(value) != len(set(value)):
+            raise ValueError("Duplicate capability.")
+        return value
+
+
+class AliasTargetWrite(StrictModel):
+    model_id: UUID
+    priority: int = Field(ge=1)
+
+
+class AliasTargetReplacement(StrictModel):
+    targets: list[AliasTargetWrite] = Field(min_length=1)
+
+    @field_validator("targets")
+    @classmethod
+    def unique_targets(cls, value):
+        if len({item.model_id for item in value}) != len(value) or len(
+            {item.priority for item in value}
+        ) != len(value):
+            raise ValueError("Duplicate model or priority.")
+        return value
+
+
+class LlmAliasCreate(StrictModel):
+    name: str = Field(min_length=1, max_length=128)
+    status: ServiceStatus = "ACTIVE"
+
+
+class LlmAliasPatch(StrictModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    status: ServiceStatus | None = None
+
+    @model_validator(mode="after")
+    def validate_patch(self):
+        if not self.model_fields_set or any(
+            getattr(self, field) is None for field in self.model_fields_set
+        ):
+            raise ValueError("At least one non-null field is required.")
+        return self
+
+
+class LlmAliasResponse(LlmAliasCreate):
+    id: UUID
+    targets: list[AliasTargetWrite]
+
+
+class RegistryPage(BaseModel):
+    data: list
+    next_cursor: str | None
+
+
+class ModelPriceCreate(StrictModel):
+    input_price_per_unit: Decimal = Field(ge=0, max_digits=20, decimal_places=10)
+    output_price_per_unit: Decimal = Field(ge=0, max_digits=20, decimal_places=10)
+    unit_tokens: int = Field(ge=1)
+    currency: str = Field(min_length=3, max_length=3, pattern=r"^[A-Z]{3}$")
+    effective_from: datetime
+    effective_to: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_window(self):
+        if self.effective_to is not None and self.effective_to <= self.effective_from:
+            raise ValueError("effective_to must follow effective_from.")
+        return self
+
+
+class ModelPricePatch(StrictModel):
+    input_price_per_unit: Decimal | None = Field(
+        default=None, ge=0, max_digits=20, decimal_places=10
+    )
+    output_price_per_unit: Decimal | None = Field(
+        default=None, ge=0, max_digits=20, decimal_places=10
+    )
+    unit_tokens: int | None = Field(default=None, ge=1)
+    currency: str | None = Field(
+        default=None, min_length=3, max_length=3, pattern=r"^[A-Z]{3}$"
+    )
+    effective_from: datetime | None = None
+    effective_to: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_patch(self):
+        if not self.model_fields_set:
+            raise ValueError("At least one field is required.")
+        if any(
+            getattr(self, field) is None
+            for field in self.model_fields_set - {"effective_to"}
+        ):
+            raise ValueError("Supplied economic fields cannot be null.")
+        return self
+
+
+class ModelPriceResponse(ModelPriceCreate):
+    id: UUID
+    model_id: UUID
