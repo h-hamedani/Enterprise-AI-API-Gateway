@@ -42,6 +42,7 @@ class Settings(BaseSettings):
         gt=0,
         le=10,
     )
+    concurrency_lease_duration_ms: int = Field(default=30000, ge=5000, le=120000)
 
     model_config = SettingsConfigDict(
         env_file=".env",
