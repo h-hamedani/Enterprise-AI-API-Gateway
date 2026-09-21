@@ -4,11 +4,11 @@ import asyncio
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
-from redis.asyncio import Redis
-from redis.exceptions import RedisError
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
+
+from app.redis.runtime import RedisRuntime
 
 router = APIRouter(tags=["Health"])
 
@@ -27,24 +27,18 @@ async def _check_postgres(engine: AsyncEngine) -> bool:
         return False
 
 
-async def _check_redis(redis: Redis) -> bool:
-    try:
-        return bool(await redis.ping())
-    except RedisError:
-        return False
-
-
 @router.get("/health/ready")
 async def health_ready(request: Request) -> JSONResponse:
     engine: AsyncEngine = request.app.state.db_engine
-    redis: Redis = request.app.state.redis
+    redis_runtime: RedisRuntime = request.app.state.redis_runtime
 
     postgres_ok, redis_ok = await asyncio.gather(
         _check_postgres(engine),
-        _check_redis(redis),
+        redis_runtime.check(),
     )
+    redis_available = redis_ok.available
 
-    if postgres_ok and redis_ok:
+    if postgres_ok and redis_available:
         return JSONResponse(
             status_code=200,
             content={

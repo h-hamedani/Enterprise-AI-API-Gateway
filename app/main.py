@@ -7,7 +7,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from app.api.control_plane import (
@@ -27,6 +26,7 @@ from app.control_plane.normal_api_registry import create_normal_api_registry_ser
 from app.core.config import get_settings
 from app.core.errors import install_error_handlers
 from app.core.request_context import request_context_middleware
+from app.redis.runtime import RedisRuntime
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -41,13 +41,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         pool_pre_ping=True,
     )
 
-    redis = Redis.from_url(
+    redis_runtime = RedisRuntime(
         settings.redis_url,
-        decode_responses=True,
+        settings.dependency_timeout_seconds,
     )
+    await redis_runtime.start()
+    redis = redis_runtime.client
 
     app.state.db_engine = db_engine
     app.state.redis = redis
+    app.state.redis_runtime = redis_runtime
     app.state.config_invalidation_publisher = RedisConfigInvalidationPublisher(redis)
     app.state.runtime_mode = "NORMAL"
     if (
@@ -87,7 +90,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        await redis.aclose()
+        await redis_runtime.close()
         await db_engine.dispose()
 
 
