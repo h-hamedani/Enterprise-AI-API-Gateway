@@ -43,6 +43,12 @@ class Settings(BaseSettings):
         le=10,
     )
     concurrency_lease_duration_ms: int = Field(default=30000, ge=5000, le=120000)
+    circuit_failure_threshold: int = Field(default=5, strict=True, ge=1)
+    circuit_failure_window_ms: int = Field(default=60000, strict=True, gt=0)
+    circuit_open_duration_ms: int = Field(default=30000, strict=True, gt=0)
+    circuit_half_open_probe_limit: int = Field(default=1, strict=True, ge=1, le=1)
+    circuit_successes_to_close: int = Field(default=1, strict=True, ge=1, le=1)
+    circuit_probe_lease_duration_ms: int = Field(default=30000, strict=True, gt=0)
 
     model_config = SettingsConfigDict(
         env_file=".env",
