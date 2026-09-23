@@ -100,6 +100,8 @@ async def _http_error_handler(
         404: ("resource_not_found", "Resource not found."),
         409: ("resource_conflict", "Resource conflict."),
         413: ("request_too_large", "Request too large."),
+        429: ("rate_limit_exceeded", "Rate limit exceeded."),
+        503: ("upstream_unavailable", "Dependency unavailable."),
     }
     code, message = mappings.get(
         exc.status_code, ("invalid_request", "Invalid request.")

@@ -13,6 +13,7 @@ from app.control_plane.auth import (
     AdminAuthenticator,
     AdminContext,
 )
+from app.control_plane.protection import ControlPlaneProtection
 from app.core.config import get_settings
 from app.core.errors import authentication_error
 from app.core.security.credentials import CredentialHasher
@@ -63,13 +64,19 @@ async def require_admin_context(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = _ADMIN_CREDENTIALS_DEPENDENCY,
 ) -> AdminContext:
+    protection = getattr(request.app.state, "control_plane_protection", None)
+    if isinstance(protection, ControlPlaneProtection):
+        await protection.pre_auth(request)
     raw_token = _extract_admin_token(credentials)
     request_id = request.state.request_id
     try:
-        return await _admin_authenticator(request).authenticate(
+        context = await _admin_authenticator(request).authenticate(
             request.app.state.db_engine,
             raw_token=raw_token,
             request_id=request_id,
         )
+        if isinstance(protection, ControlPlaneProtection):
+            await protection.post_auth(request, context)
+        return context
     except AdminAuthenticationError:
         authentication_error()

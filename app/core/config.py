@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     circuit_half_open_probe_limit: int = Field(default=1, strict=True, ge=1, le=1)
     circuit_successes_to_close: int = Field(default=1, strict=True, ge=1, le=1)
     circuit_probe_lease_duration_ms: int = Field(default=30000, strict=True, gt=0)
+    trusted_proxy_cidrs: tuple[str, ...] = ()
 
     model_config = SettingsConfigDict(
         env_file=".env",

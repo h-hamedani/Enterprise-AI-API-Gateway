@@ -52,6 +52,7 @@ class ResolvedRatePolicy:
     scope_id: UUID
     requests_per_window: int
     window_seconds: int
+    key_override: str | None = None
 
     def __post_init__(self) -> None:
         if not all(
@@ -113,6 +114,8 @@ class LoggingRateLimitTelemetry:
 
 
 def rate_limit_key(policy: ResolvedRatePolicy) -> str:
+    if policy.key_override is not None:
+        return policy.key_override
     return (
         f"{REDIS_NAMESPACE_PREFIX}rl:{{{policy.tenant_id}}}:"
         f"{policy.scope_type.value}:{policy.scope_id}"

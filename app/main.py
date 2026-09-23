@@ -23,6 +23,7 @@ from app.control_plane.application_api_keys import create_control_plane_admin_se
 from app.control_plane.config_publish import RedisConfigInvalidationPublisher
 from app.control_plane.llm_registry import create_llm_registry_service
 from app.control_plane.normal_api_registry import create_normal_api_registry_service
+from app.control_plane.protection import ControlPlaneProtection
 from app.core.config import get_settings
 from app.core.errors import install_error_handlers
 from app.core.request_context import request_context_middleware
@@ -51,6 +52,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.db_engine = db_engine
     app.state.redis = redis
     app.state.redis_runtime = redis_runtime
+    if settings.credential_hmac_secret is not None:
+        app.state.control_plane_protection = ControlPlaneProtection(
+            redis_runtime, settings
+        )
     app.state.config_invalidation_publisher = RedisConfigInvalidationPublisher(redis)
     app.state.runtime_mode = "NORMAL"
     if (
