@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 
 from app.control_plane.config_publish import (
+    CANONICAL_INVALIDATION_CHANNEL,
     CONFIG_INVALIDATION_CHANNEL,
     RedisConfigInvalidationPublisher,
 )
@@ -14,13 +15,14 @@ from app.control_plane.mutation_coordinator import CommittedMutation, ResourceTy
 
 
 class RecordingRedis:
-    def __init__(self, error: Exception | None = None) -> None:
+    def __init__(self, error: Exception | None = None, failing_channels=None) -> None:
         self.error = error
+        self.failing_channels = set(failing_channels or ())
         self.calls = []
 
     async def publish(self, channel, payload):
-        if self.error is not None:
-            raise self.error
+        if self.error is not None or channel in self.failing_channels:
+            raise self.error or RuntimeError("injected redis failure")
         self.calls.append((channel, payload))
         return 1
 
@@ -40,9 +42,12 @@ async def test_publisher_uses_frozen_channel_and_safe_payload():
     )
 
     assert published is True
-    assert len(redis.calls) == 1
-    channel, encoded = redis.calls[0]
-    assert channel == CONFIG_INVALIDATION_CHANNEL
+    assert len(redis.calls) == 2
+    assert {channel for channel, _ in redis.calls} == {
+        CANONICAL_INVALIDATION_CHANNEL,
+        CONFIG_INVALIDATION_CHANNEL,
+    }
+    _channel, encoded = redis.calls[0]
     assert json.loads(encoded) == {
         "tenant_id": str(mutation.tenant_id),
         "resource_type": "LLM_TARGET",
@@ -85,3 +90,23 @@ async def test_publish_failure_is_best_effort_and_secret_safe(caplog, monkeypatc
     assert published is False
     assert "provider-secret-must-not-be-logged" not in caplog.text
     assert "Config invalidation publication failed" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failing", "expected"),
+    [
+        ({CONFIG_INVALIDATION_CHANNEL}, True),
+        ({CANONICAL_INVALIDATION_CHANNEL}, True),
+        ({CONFIG_INVALIDATION_CHANNEL, CANONICAL_INVALIDATION_CHANNEL}, False),
+    ],
+)
+async def test_dual_publication_failure_matrix(failing, expected):
+    redis = RecordingRedis(failing_channels=failing)
+    mutation = CommittedMutation(uuid4(), 9, ResourceType.ROUTE, uuid4())
+    assert (
+        await RedisConfigInvalidationPublisher(redis).publish(
+            mutation, request_id=uuid4()
+        )
+        is expected
+    )

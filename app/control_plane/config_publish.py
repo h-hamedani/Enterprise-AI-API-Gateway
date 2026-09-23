@@ -8,10 +8,15 @@ from uuid import UUID
 from redis.asyncio import Redis
 
 from app.control_plane.mutation_coordinator import CommittedMutation
+from app.redis.namespace import (
+    HISTORICAL_M2_INVALIDATION_CHANNEL,
+    M3_INVALIDATION_CHANNEL,
+)
 
 logger = logging.getLogger(__name__)
 
-CONFIG_INVALIDATION_CHANNEL = "gateway:config"
+CONFIG_INVALIDATION_CHANNEL = HISTORICAL_M2_INVALIDATION_CHANNEL
+CANONICAL_INVALIDATION_CHANNEL = M3_INVALIDATION_CHANNEL
 
 
 class InvalidationPublisher(Protocol):
@@ -37,9 +42,15 @@ class RedisConfigInvalidationPublisher:
             separators=(",", ":"),
             sort_keys=True,
         )
-        try:
-            await self._redis.publish(CONFIG_INVALIDATION_CHANNEL, payload)
-        except Exception:  # noqa: BLE001 - publication must never fail committed writes
+        outcomes: list[bool] = []
+        for channel in (CANONICAL_INVALIDATION_CHANNEL, CONFIG_INVALIDATION_CHANNEL):
+            try:
+                await self._redis.publish(channel, payload)
+            except Exception:  # noqa: BLE001 - publication must never fail committed writes
+                outcomes.append(False)
+                continue
+            outcomes.append(True)
+        if not any(outcomes):
             logger.error(
                 "Config invalidation publication failed",
                 extra={
@@ -52,4 +63,6 @@ class RedisConfigInvalidationPublisher:
                 },
             )
             return False
+        if not all(outcomes):
+            logger.warning("Config invalidation publication partially succeeded")
         return True
