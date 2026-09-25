@@ -21,6 +21,10 @@ from app.api.health import router as health_router
 from app.control_plane.admin_reads import create_admin_read_service
 from app.control_plane.application_api_keys import create_control_plane_admin_services
 from app.control_plane.config_publish import RedisConfigInvalidationPublisher
+from app.control_plane.config_reconciler import (
+    ConfigReconciler,
+    ConfigVersionRepository,
+)
 from app.control_plane.config_subscriber import (
     InvalidationRegistry,
     RedisInvalidationSubscriber,
@@ -63,9 +67,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.config_invalidation_publisher = RedisConfigInvalidationPublisher(redis)
     invalidation_registry = InvalidationRegistry()
     invalidation_subscriber = RedisInvalidationSubscriber(redis, invalidation_registry)
+    config_reconciler = ConfigReconciler(
+        invalidation_registry, ConfigVersionRepository(db_engine).lookup
+    )
     app.state.invalidation_registry = invalidation_registry
     app.state.invalidation_subscriber = invalidation_subscriber
+    app.state.config_reconciler = config_reconciler
     await invalidation_subscriber.start()
+    await config_reconciler.start()
     app.state.runtime_mode = "NORMAL"
     if (
         settings.credential_hmac_secret is not None
@@ -104,6 +113,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        await config_reconciler.stop()
         await invalidation_subscriber.stop()
         await redis_runtime.close()
         await db_engine.dispose()
