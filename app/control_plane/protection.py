@@ -13,6 +13,7 @@ from app.core.config import Settings
 from app.core.errors import GatewayHttpError
 from app.persistence.models import Base
 from app.persistence.models.enums import RateScopeType
+from app.redis.local_degraded import LocalDegradedProtection
 from app.redis.rate_limit import (
     RateLimitDependencyError,
     RedisTokenBucket,
@@ -104,6 +105,7 @@ def _resolved_admin_policies(rows, tenant_id: UUID, admin_token_id: UUID):
             scope_id=admin_token_id,
             requests_per_window=row["requests_per_window"],
             window_seconds=row["window_seconds"],
+            degraded_factor=row["degraded_factor"],
         )
         for row in rows
         if row["requests_per_window"] is not None and row["window_seconds"] is not None
@@ -111,9 +113,19 @@ def _resolved_admin_policies(rows, tenant_id: UUID, admin_token_id: UUID):
 
 
 class ControlPlaneProtection:
-    def __init__(self, runtime: RedisRuntime, settings: Settings) -> None:
+    def __init__(
+        self,
+        runtime: RedisRuntime,
+        settings: Settings,
+        *,
+        local: LocalDegradedProtection | None = None,
+    ) -> None:
         self._bucket = RedisTokenBucket(runtime)
         self._settings = settings
+        self.local = local or LocalDegradedProtection(
+            max_entries=settings.degraded_local_max_entries_per_store,
+            lease_duration_ms=settings.concurrency_lease_duration_ms,
+        )
 
     async def pre_auth(self, request) -> None:
         secret = self._settings.credential_hmac_secret
@@ -132,7 +144,7 @@ class ControlPlaneProtection:
         policy = pre_auth_policy(
             resolve_client_ip(request, self._settings.trusted_proxy_cidrs), key
         )
-        await self._evaluate([policy])
+        await self._evaluate([policy], pre_auth=True)
 
     async def post_auth(self, request, context) -> None:
         policies = await enabled_admin_token_policies(
@@ -140,13 +152,18 @@ class ControlPlaneProtection:
         )
         await self._evaluate(policies)
 
-    async def _evaluate(self, policies: list[ResolvedRatePolicy]) -> None:
+    async def _evaluate(
+        self, policies: list[ResolvedRatePolicy], *, pre_auth: bool = False
+    ) -> None:
+        ordered = RedisTokenBucket._validate_and_order(policies)
         try:
-            result = await self._bucket.evaluate(policies)
+            if self.local.mode_degraded:
+                result = await self._local_evaluate(ordered, pre_auth)
+            else:
+                result = await self._bucket.evaluate(ordered)
         except RateLimitDependencyError:
-            raise GatewayHttpError(
-                503, "upstream_unavailable", "Dependency unavailable."
-            ) from None
+            self.local.mark_unreachable()
+            result = await self._local_evaluate(ordered, pre_auth)
         if not result.allowed:
             retry_after = max(1, (result.retry_after_ms + 999) // 1000)
             raise GatewayHttpError(
@@ -155,3 +172,10 @@ class ControlPlaneProtection:
                 "Rate limit exceeded.",
                 headers={"Retry-After": str(retry_after)},
             )
+
+    async def _local_evaluate(
+        self, policies: tuple[ResolvedRatePolicy, ...], pre_auth: bool
+    ):
+        if pre_auth:
+            return await self.local.pre_auth.evaluate(policies[0].scope_id)
+        return await self.local.rate.evaluate(policies)

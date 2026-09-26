@@ -106,5 +106,6 @@ async def test_admin_policy_resolution_is_enabled_tenant_and_token_scoped(
     assert len(policies) == 1
     assert policies[0].scope_id == token_a
     assert policies[0].requests_per_window == 7
+    assert policies[0].degraded_factor == Decimal("0.25")
     assert enabled_admin_token_policies_sync(connection, tenant_a, token_b)
     assert enabled_admin_token_policies_sync(connection, tenant_b, uuid4()) == []

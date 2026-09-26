@@ -4,6 +4,7 @@ import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Protocol
 from uuid import UUID
@@ -13,6 +14,7 @@ from redis.exceptions import NoScriptError
 
 from app.persistence.models.enums import RateScopeType
 from app.redis.namespace import REDIS_NAMESPACE_PREFIX
+from app.redis.redis_failure import is_redis_availability_failure
 from app.redis.runtime import RedisRuntime
 
 logger = logging.getLogger(__name__)
@@ -43,6 +45,13 @@ class ConcurrencyDependencyError(RuntimeError):
         super().__init__("Concurrency dependency is unavailable.")
 
 
+class ConcurrencyProtocolError(RuntimeError):
+    """The Redis result did not match the frozen semaphore protocol."""
+
+    def __init__(self) -> None:
+        super().__init__("Concurrency response is invalid.")
+
+
 @dataclass(frozen=True, slots=True)
 class ResolvedConcurrencyPolicy:
     policy_id: UUID
@@ -50,6 +59,7 @@ class ResolvedConcurrencyPolicy:
     scope_type: RateScopeType
     scope_id: UUID
     max_concurrency: int
+    degraded_factor: Decimal | None = None
 
     def __post_init__(self) -> None:
         if not all(
@@ -66,6 +76,15 @@ class ResolvedConcurrencyPolicy:
             raise ConcurrencyPolicyError(
                 "Policy concurrency must be a positive PostgreSQL integer."
             )
+        if self.degraded_factor is not None:
+            try:
+                factor = Decimal(str(self.degraded_factor))
+            except (InvalidOperation, ValueError) as exc:
+                raise ConcurrencyPolicyError(
+                    "Policy degraded factor is invalid."
+                ) from exc
+            if not factor.is_finite() or not 0 < factor <= 1:
+                raise ConcurrencyPolicyError("Policy degraded factor is invalid.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,10 +197,12 @@ class RedisConcurrencySemaphore:
                     sha, len(keys), *keys, *arguments
                 )
             if type(result) is not int or result not in (0, 1):
-                raise ConcurrencyDependencyError()
+                raise ConcurrencyProtocolError()
         except Exception as exc:
             self._record(action, "error", ordered)
-            raise ConcurrencyDependencyError() from exc
+            if is_redis_availability_failure(exc):
+                raise ConcurrencyDependencyError() from None
+            raise
         outcomes = {
             "acquire": ("rejected", "acquired"),
             "renew": ("missing", "renewed"),

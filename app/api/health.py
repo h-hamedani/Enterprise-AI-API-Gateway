@@ -74,6 +74,9 @@ async def health_traffic(request: Request) -> JSONResponse:
         "runtime_mode",
         "NORMAL",
     )
+    local = getattr(request.app.state, "local_degraded_protection", None)
+    if runtime_mode == "NORMAL" and local is not None and local.mode_degraded:
+        runtime_mode = "DEGRADED"
 
     if runtime_mode == "DRAINING":
         return JSONResponse(

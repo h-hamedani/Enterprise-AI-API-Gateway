@@ -4,6 +4,7 @@ import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Protocol
 from uuid import UUID
@@ -12,6 +13,7 @@ from redis.exceptions import NoScriptError
 
 from app.persistence.models.enums import RateScopeType
 from app.redis.namespace import REDIS_NAMESPACE_PREFIX
+from app.redis.redis_failure import is_redis_availability_failure
 from app.redis.runtime import RedisRuntime
 
 logger = logging.getLogger(__name__)
@@ -44,6 +46,13 @@ class RateLimitDependencyError(RuntimeError):
         super().__init__("Rate-limit dependency is unavailable.")
 
 
+class RateLimitProtocolError(RuntimeError):
+    """The Redis result did not match the frozen token-bucket protocol."""
+
+    def __init__(self) -> None:
+        super().__init__("Rate-limit response is invalid.")
+
+
 @dataclass(frozen=True, slots=True)
 class ResolvedRatePolicy:
     policy_id: UUID
@@ -53,6 +62,7 @@ class ResolvedRatePolicy:
     requests_per_window: int
     window_seconds: int
     key_override: str | None = None
+    degraded_factor: Decimal | None = None
 
     def __post_init__(self) -> None:
         if not all(
@@ -75,6 +85,15 @@ class ResolvedRatePolicy:
             raise RateLimitPolicyError(
                 "Policy rate values exceed the safe runtime bound."
             )
+        if self.degraded_factor is not None:
+            try:
+                factor = Decimal(str(self.degraded_factor))
+            except (InvalidOperation, ValueError) as exc:
+                raise RateLimitPolicyError(
+                    "Policy degraded factor is invalid."
+                ) from exc
+            if not factor.is_finite() or not 0 < factor <= 1:
+                raise RateLimitPolicyError("Policy degraded factor is invalid.")
 
     @property
     def window_ms(self) -> int:
@@ -156,11 +175,11 @@ class RedisTokenBucket:
                     sha, len(keys), *keys, *arguments
                 )
             result = self._parse_result(response)
-        except RateLimitPolicyError:
-            raise
         except Exception as exc:
             self._record("error", ordered)
-            raise RateLimitDependencyError() from exc
+            if is_redis_availability_failure(exc):
+                raise RateLimitDependencyError() from None
+            raise
 
         self._record("allowed" if result.allowed else "rejected", ordered)
         return result
@@ -196,10 +215,12 @@ class RedisTokenBucket:
     @staticmethod
     def _parse_result(response) -> RateLimitResult:
         if not isinstance(response, (list, tuple)) or len(response) != 2:
-            raise RateLimitDependencyError()
-        allowed, retry_after_ms = int(response[0]), int(response[1])
+            raise RateLimitProtocolError()
+        if any(type(value) is not int for value in response):
+            raise RateLimitProtocolError()
+        allowed, retry_after_ms = response
         if allowed not in (0, 1) or retry_after_ms < 0:
-            raise RateLimitDependencyError()
+            raise RateLimitProtocolError()
         return RateLimitResult(bool(allowed), retry_after_ms)
 
     def _record(self, outcome: str, policies: Sequence[ResolvedRatePolicy]) -> None:

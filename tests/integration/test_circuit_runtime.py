@@ -229,7 +229,7 @@ async def test_deadline_overflow_does_not_partially_insert_failure(redis_runtime
         redis_runtime, config(failure_threshold=1, open_duration_ms=9007199254740991)
     )
     token = (await store.check_or_claim_eligibility(item)).normal_token
-    with pytest.raises(CircuitDependencyError):
+    with pytest.raises(CircuitStateError):
         await store.record_failure(item, token)
     assert await redis_runtime.client.zcard(f"{circuit_key(item)}:failures") == 0
     assert await redis_runtime.client.hget(circuit_key(item), "state") == "CLOSED"
@@ -266,9 +266,16 @@ async def test_sliding_window_excludes_scores_after_redis_now(redis_runtime):
 
 @pytest.mark.asyncio
 async def test_dependency_error_suppresses_raw_redis_exception_context():
-    settings = get_settings()
-    runtime = RedisRuntime(settings.redis_url, settings.dependency_timeout_seconds)
-    store = RedisCircuitStore(runtime, config())
+    from redis.exceptions import ConnectionError as RedisConnectionError
+
+    class FailingClient:
+        async def script_load(self, script):
+            raise RedisConnectionError("redis://secret@host")
+
+    class FailingRuntime:
+        client = FailingClient()
+
+    store = RedisCircuitStore(FailingRuntime(), config())
     with pytest.raises(CircuitDependencyError) as caught:
         await store.check_or_claim_eligibility(identity())
     assert caught.value.__suppress_context__

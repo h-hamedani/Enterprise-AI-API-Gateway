@@ -35,6 +35,7 @@ from app.control_plane.protection import ControlPlaneProtection
 from app.core.config import get_settings
 from app.core.errors import install_error_handlers
 from app.core.request_context import request_context_middleware
+from app.redis.local_degraded import LocalDegradedProtection
 from app.redis.runtime import RedisRuntime
 
 if sys.platform == "win32":
@@ -60,9 +61,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.db_engine = db_engine
     app.state.redis = redis
     app.state.redis_runtime = redis_runtime
+    app.state.local_degraded_protection = LocalDegradedProtection(
+        max_entries=settings.degraded_local_max_entries_per_store,
+        lease_duration_ms=settings.concurrency_lease_duration_ms,
+    )
     if settings.credential_hmac_secret is not None:
         app.state.control_plane_protection = ControlPlaneProtection(
-            redis_runtime, settings
+            redis_runtime, settings, local=app.state.local_degraded_protection
         )
     app.state.config_invalidation_publisher = RedisConfigInvalidationPublisher(redis)
     invalidation_registry = InvalidationRegistry()

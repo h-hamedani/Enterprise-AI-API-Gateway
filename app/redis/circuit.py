@@ -17,6 +17,7 @@ from app.core.config import Settings
 from app.persistence.models.llm_registry import LlmModel, LlmProviderTarget
 from app.persistence.models.normal_api import NormalApiRoute, NormalApiService
 from app.redis.namespace import REDIS_NAMESPACE_PREFIX
+from app.redis.redis_failure import is_redis_availability_failure
 from app.redis.runtime import RedisRuntime
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ class CircuitState(StrEnum):
     CLOSED = "CLOSED"
     OPEN = "OPEN"
     HALF_OPEN = "HALF_OPEN"
+    DEGRADED_HALF_OPEN = "DEGRADED_HALF_OPEN"
 
 
 class CircuitContractError(ValueError):
@@ -44,6 +46,13 @@ class CircuitDependencyError(RuntimeError):
 class CircuitStateError(RuntimeError):
     def __init__(self) -> None:
         super().__init__("Circuit state cannot transition safely.")
+
+
+class CircuitProtocolError(RuntimeError):
+    """The Redis result did not match the frozen circuit protocol."""
+
+    def __init__(self) -> None:
+        super().__init__("Circuit response is invalid.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,21 +321,59 @@ class RedisCircuitStore:
                     sha, 2, key, f"{key}:failures", *args
                 )
             if not isinstance(row, list) or len(row) < 3:
-                raise CircuitDependencyError()
+                raise CircuitProtocolError()
             if row[0] == "overflow":
                 raise CircuitStateError()
+            if row[0] == "invalid":
+                raise CircuitStateError()
             if row[0] != "ok":
-                raise CircuitDependencyError()
+                raise CircuitProtocolError()
+            self._validate_row(action, row)
             return row
         except CircuitStateError:
             self._telemetry.record(action, "error", "half_open", identity.target_kind)
             raise
-        except Exception:  # noqa: BLE001 - dependency errors must be sanitized
+        except Exception as exc:
             self._telemetry.record(action, "error", "error", identity.target_kind)
-            raise CircuitDependencyError() from None
+            if is_redis_availability_failure(exc):
+                raise CircuitDependencyError() from None
+            raise
 
     async def _load(self, *, force: bool = False) -> str:
         async with self._script_lock:
             if force or self._sha is None:
                 self._sha = await self._runtime.client.script_load(_SCRIPT)
             return self._sha
+
+    @staticmethod
+    def _validate_row(action: str, row: list[str]) -> None:
+        if any(type(value) is not str for value in row):
+            raise CircuitProtocolError()
+        if row[1] not in ("CLOSED", "OPEN", "HALF_OPEN"):
+            raise CircuitProtocolError()
+        if action == "eligibility":
+            if row[2] == "normal":
+                if len(row) != 5 or row[1] != "CLOSED":
+                    raise CircuitProtocolError()
+                try:
+                    parsed = UUID(row[3])
+                    generation = int(row[4])
+                except (ValueError, TypeError):
+                    raise CircuitProtocolError() from None
+                if str(parsed) != row[3]:
+                    raise CircuitProtocolError()
+                if str(generation) != row[4] or not 1 <= generation <= _MAX_SAFE:
+                    raise CircuitProtocolError()
+            elif row[2] == "probe":
+                if len(row) != 4 or row[1] != "HALF_OPEN":
+                    raise CircuitProtocolError()
+                try:
+                    parsed = UUID(row[3])
+                except (ValueError, TypeError):
+                    raise CircuitProtocolError() from None
+                if str(parsed) != row[3]:
+                    raise CircuitProtocolError()
+            elif row[2] != "denied" or len(row) != 3:
+                raise CircuitProtocolError()
+        elif len(row) != 3 or row[2] not in ("applied", "stale"):
+            raise CircuitProtocolError()

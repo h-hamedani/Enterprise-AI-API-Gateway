@@ -1,6 +1,7 @@
 from uuid import uuid4
 
 import pytest
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from app.persistence.models.enums import RateScopeType
 from app.redis.rate_limit import (
@@ -126,7 +127,7 @@ async def test_script_input_is_deterministically_layer_ordered() -> None:
 @pytest.mark.asyncio
 async def test_redis_failure_is_typed_and_secret_safe() -> None:
     secret = "redis://user:password@host"
-    redis = RecordingRedis(error=RuntimeError(secret))
+    redis = RecordingRedis(error=RedisConnectionError(secret))
     item = policy()
 
     with pytest.raises(RateLimitDependencyError) as caught:
