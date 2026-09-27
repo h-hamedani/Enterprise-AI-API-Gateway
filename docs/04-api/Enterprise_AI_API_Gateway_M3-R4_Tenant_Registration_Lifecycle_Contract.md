@@ -6,6 +6,15 @@ registration-lifetime gap left by M3-R2 and composes with M3-R3's shared
 applied-version and per-tenant callback-success rules. It does not rewrite
 either earlier addendum or change the M3.6 Pub/Sub event contract.
 
+M3-R3A qualifies resource-only registration: a consumer participating in
+tenant correctness must register as required and provide its own distinct
+authoritative current-state reconciliation capability. It need not add a
+tenant-wide event callback. Required-consumer registration remains pending
+initialization until that capability succeeds. The coordinator still must not
+fabricate resource IDs or replay unknown missed events. Legacy resource-only
+registration without this capability cannot be certified as a required
+consumer. Existing tenant-wide callback initialization rules remain in force.
+
 ## Membership and registration lifetime
 
 Once a tenant enters this process's reconciliation set, membership lasts until

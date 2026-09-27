@@ -91,8 +91,9 @@ async def test_failed_tenant_initialization_retries_and_replacement_reinitialize
     )
     assert await registry.reconcile(tenant, 0) == "initialized"
     assert registry.applied_version(tenant) == 0
-    assert await registry.reconcile(tenant, 0) == "up_to_date"
-    assert calls == [0, 0]
+    # Unfenced legacy application cannot clear a failed-callback dirty state.
+    assert await registry.reconcile(tenant, 0) == "reconciled"
+    assert calls == [0, 0, 0]
 
 
 @pytest.mark.asyncio
@@ -275,7 +276,7 @@ async def test_empty_membership_pass_skips_database_and_later_registration_joins
     observed = []
     await registry.register_tenant_callback(tenant, observed.append)
     assert await reconciler.reconcile_once() == "pass_success"
-    assert calls == [frozenset({tenant})]
+    assert calls == [frozenset({tenant}), frozenset({tenant})]
     assert observed == [4]
     assert registry.version(tenant) == 4
 
@@ -358,7 +359,7 @@ async def test_empty_managed_first_pass_avoids_lookup_then_late_registration_joi
         await registry.register_tenant_callback(tenant, lambda version: observed.set())
         advance.set()
         await asyncio.wait_for(observed.wait(), 1)
-        assert lookup_calls == [frozenset({tenant})]
+        assert lookup_calls == [frozenset({tenant}), frozenset({tenant})]
         assert registry.version(tenant) == 2
         assert reconciler.running
     finally:

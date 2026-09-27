@@ -5,6 +5,13 @@ resolves gaps in the M3 Execution Pack V1.1 without rewriting that pack, the
 M3-R1 invalidation-channel addendum, or historical M2 artifacts. The existing
 M3-R2 token-bucket addendum governs a separate subject.
 
+M3-R3A qualifies this contract's equal-version no-op: a tenant with
+`reconciliation_required` or pending required-consumer initialization must
+perform current-state reconciliation even when PostgreSQL and local observed
+versions are equal. Observed version alone does not certify consumer
+completeness. M3-R2's registered-tenant-only scope, missing-row effective
+zero, no full-table scan, and database-failure behavior remain unchanged.
+
 ## Gaps and authoritative resolutions
 
 The M3 Execution Pack establishes PostgreSQL `config_versions` as truth,

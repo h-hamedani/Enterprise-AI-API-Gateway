@@ -6,6 +6,14 @@ ordering without rewriting the M3-R2 PostgreSQL reconciliation contract or
 historical M3.6 artifacts. M3-R3 supersedes the existing M3.6 runtime behavior
 that advances a version before invoking its resource callback.
 
+M3-R3A separates this monotonic observed version from required-consumer
+completeness. A failed required callback marks the tenant
+`reconciliation_required`; later successful version advancement does not clear
+that condition. The later-version examples below describe observed-version
+progress only, not proof that every required consumer is current. Only a
+successful M3-R3A current-state pass across the required membership snapshot
+may clear the condition. No second version store is introduced.
+
 ## Meaning of the observed version
 
 The process-local tenant observed version is the highest configuration version

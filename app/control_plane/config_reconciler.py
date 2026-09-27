@@ -53,27 +53,23 @@ class ConfigReconciler:
         return self._task is not None and not self._task.done()
 
     async def reconcile_once(self) -> str:
+        """Return a pass outcome, never a tenant-completeness certificate."""
         tenant_ids = self._registry.tenant_ids()
         if not tenant_ids:
             logger.debug("Config version reconciliation outcome=empty_membership")
             return "empty_membership"
-        try:
-            versions = await self._lookup(tenant_ids)
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001 - contain arbitrary database failures
-            logger.warning("Config version reconciliation lookup failed")
-            return "pass_error"
         failed = False
         for tenant_id in tenant_ids:
             try:
-                outcome = await self._registry.reconcile(tenant_id, versions[tenant_id])
+                outcome = await self._registry.reconcile_fenced(tenant_id, self._lookup)
                 logger.debug("Config version reconciliation outcome=%s", outcome)
+                if outcome in ("fence_mismatch", "stale_db_ignored"):
+                    failed = True
             except asyncio.CancelledError:
                 raise
-            except Exception:  # noqa: BLE001 - contain user callback failures
+            except Exception:  # noqa: BLE001 - contain DB and callback failures
                 failed = True
-                logger.warning("Config version reconciliation callback failed")
+                logger.warning("Config version reconciliation tenant pass failed")
         logger.debug(
             "Config version reconciliation pass=%s",
             "pass_error" if failed else "pass_success",
