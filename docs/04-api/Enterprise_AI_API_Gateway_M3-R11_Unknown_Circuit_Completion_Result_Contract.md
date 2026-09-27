@@ -1,4 +1,4 @@
-﻿# M3-R11 — Unknown Circuit Completion Result Contract
+# M3-R11 — Unknown Circuit Completion Result Contract
 
 Status: FROZEN. Documentation only; M3.9 implementation remains separate.
 
@@ -125,4 +125,3 @@ local-generation retirement, and no traffic-state writeback or merge.
 This addendum changes no OpenAPI or HTTP schema, database schema, Alembic
 migration, Redis key format, or M3.4 primitive result contract. It does not
 implement M3.9.
-
