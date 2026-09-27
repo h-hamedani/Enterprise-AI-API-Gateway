@@ -19,6 +19,7 @@ from app.redis.rate_limit import (
     RedisTokenBucket,
     ResolvedRatePolicy,
 )
+from app.redis.recovery import RecoveryCoordinator
 from app.redis.runtime import RedisRuntime
 
 PRE_AUTH_REQUESTS = 20
@@ -119,6 +120,7 @@ class ControlPlaneProtection:
         settings: Settings,
         *,
         local: LocalDegradedProtection | None = None,
+        recovery: RecoveryCoordinator | None = None,
     ) -> None:
         self._bucket = RedisTokenBucket(runtime)
         self._settings = settings
@@ -126,6 +128,7 @@ class ControlPlaneProtection:
             max_entries=settings.degraded_local_max_entries_per_store,
             lease_duration_ms=settings.concurrency_lease_duration_ms,
         )
+        self._recovery = recovery
 
     async def pre_auth(self, request) -> None:
         secret = self._settings.credential_hmac_secret
@@ -156,6 +159,27 @@ class ControlPlaneProtection:
         self, policies: list[ResolvedRatePolicy], *, pre_auth: bool = False
     ) -> None:
         ordered = RedisTokenBucket._validate_and_order(policies)
+        if self._recovery is not None:
+            async with self._recovery.admission() as selected:
+                if selected is not None:
+                    result = await self._local_evaluate(ordered, pre_auth, selected)
+                else:
+                    try:
+                        result = await self._bucket.evaluate(ordered)
+                    except RateLimitDependencyError:
+                        self._recovery.mark_unreachable()
+                        result = await self._local_evaluate(
+                            ordered, pre_auth, self._recovery.active_generation
+                        )
+            if not result.allowed:
+                retry_after = max(1, (result.retry_after_ms + 999) // 1000)
+                raise GatewayHttpError(
+                    429,
+                    "rate_limit_exceeded",
+                    "Rate limit exceeded.",
+                    headers={"Retry-After": str(retry_after)},
+                )
+            return
         try:
             if self.local.mode_degraded:
                 result = await self._local_evaluate(ordered, pre_auth)
@@ -174,8 +198,12 @@ class ControlPlaneProtection:
             )
 
     async def _local_evaluate(
-        self, policies: tuple[ResolvedRatePolicy, ...], pre_auth: bool
+        self,
+        policies: tuple[ResolvedRatePolicy, ...],
+        pre_auth: bool,
+        local: LocalDegradedProtection | None = None,
     ):
+        local = local or self.local
         if pre_auth:
-            return await self.local.pre_auth.evaluate(policies[0].scope_id)
-        return await self.local.rate.evaluate(policies)
+            return await local.pre_auth.evaluate(policies[0].scope_id)
+        return await local.rate.evaluate(policies)

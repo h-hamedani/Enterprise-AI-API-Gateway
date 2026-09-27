@@ -74,9 +74,17 @@ async def health_traffic(request: Request) -> JSONResponse:
         "runtime_mode",
         "NORMAL",
     )
+    coordinator = getattr(request.app.state, "recovery_coordinator", None)
+    if coordinator is not None and runtime_mode != "DRAINING":
+        runtime_mode = coordinator.mode.value
     local = getattr(request.app.state, "local_degraded_protection", None)
-    if runtime_mode == "NORMAL" and local is not None and local.mode_degraded:
-        runtime_mode = "DEGRADED"
+    if (
+        coordinator is None
+        and runtime_mode == "NORMAL"
+        and local is not None
+        and local.mode_degraded
+    ):
+        runtime_mode = "DEGRADED_REDIS"
 
     if runtime_mode == "DRAINING":
         return JSONResponse(

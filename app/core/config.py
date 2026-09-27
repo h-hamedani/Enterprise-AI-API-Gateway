@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     degraded_local_max_entries_per_store: int = Field(
         default=10000, strict=True, ge=1, le=1000000
     )
+    local_circuit_normal_completion_ttl_ms: int = Field(
+        default=300000, strict=True, ge=5000, le=3600000
+    )
     circuit_failure_threshold: int = Field(default=5, strict=True, ge=1)
     circuit_failure_window_ms: int = Field(default=60000, strict=True, gt=0)
     circuit_open_duration_ms: int = Field(default=30000, strict=True, gt=0)

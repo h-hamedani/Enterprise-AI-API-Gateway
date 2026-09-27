@@ -50,7 +50,7 @@ async def test_admin_http_pre_auth_degrades_and_rejects_sixth_attempt(monkeypatc
                     assert "127.0.0.1" not in rejected.text
                     traffic = await client.get("/health/traffic")
                     assert traffic.status_code == 200
-                    assert traffic.json()["runtime_mode"] == "DEGRADED"
+                    assert traffic.json()["runtime_mode"] == "DEGRADED_REDIS"
             finally:
                 await refused.close()
     finally:

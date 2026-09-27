@@ -14,6 +14,51 @@ from app.control_plane.config_subscriber import (
 from app.redis.namespace import M3_INVALIDATION_CHANNEL
 
 
+@pytest.mark.asyncio
+async def test_subscriber_readiness_requires_live_canonical_subscription():
+    subscribed = asyncio.Event()
+    disconnect = asyncio.Event()
+    reconnecting = asyncio.Event()
+    allow_reconnect = asyncio.Event()
+
+    class PubSub:
+        def __init__(self, number):
+            self.number = number
+
+        async def subscribe(self, *channels):
+            assert channels == (M3_INVALIDATION_CHANNEL,)
+            if self.number > 1:
+                reconnecting.set()
+                await allow_reconnect.wait()
+            subscribed.set()
+
+        async def get_message(self, **kwargs):
+            await disconnect.wait()
+            raise RedisConnectionError()
+
+        async def aclose(self):
+            pass
+
+    class Redis:
+        def __init__(self):
+            self.count = 0
+
+        def pubsub(self):
+            self.count += 1
+            return PubSub(self.count)
+
+    subscriber = RedisInvalidationSubscriber(Redis(), InvalidationRegistry())
+    assert not subscriber.ready
+    await subscriber.start()
+    await subscribed.wait()
+    assert subscriber.ready
+    disconnect.set()
+    await asyncio.wait_for(reconnecting.wait(), 2)
+    assert not subscriber.ready
+    await subscriber.stop()
+    assert not subscriber.ready
+
+
 def test_parse_rejects_extra_fields_and_invalid_versions():
     tenant_id, resource_id = uuid4(), uuid4()
     base = {

@@ -69,7 +69,17 @@ class InvalidationRegistry:
         self._pending_required: set[tuple[UUID, str, UUID]] = set()
         self._reconciliation_required: set[UUID] = set()
         self._certified_tenants: set[UUID] = set()
+        self._invalidation_epoch = 0
         self._locks: dict[UUID, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+    @property
+    def invalidation_epoch(self) -> int:
+        """Process-local fence against cutover after a certificate invalidation."""
+        return self._invalidation_epoch
+
+    def _invalidate_certificate(self, tenant_id: UUID) -> None:
+        self._certified_tenants.discard(tenant_id)
+        self._invalidation_epoch += 1
 
     async def register(
         self,
@@ -86,7 +96,7 @@ class InvalidationRegistry:
                 )
             self._tenants.add(tenant_id)
             self._callbacks[key] = callback
-            self._certified_tenants.discard(tenant_id)
+            self._invalidate_certificate(tenant_id)
 
     async def register_tenant_callback(
         self, tenant_id: UUID, callback: Callable[[int], Awaitable[None] | None]
@@ -95,7 +105,7 @@ class InvalidationRegistry:
             self._tenants.add(tenant_id)
             self._tenant_callbacks[tenant_id] = callback
             self._pending_initialization.add(tenant_id)
-            self._certified_tenants.discard(tenant_id)
+            self._invalidate_certificate(tenant_id)
 
     async def register_required_consumer(
         self,
@@ -112,7 +122,7 @@ class InvalidationRegistry:
             self._callbacks[key] = event_callback
             self._required_current_state[key] = reconcile_current_state
             self._pending_required.add(key)
-            self._certified_tenants.discard(tenant_id)
+            self._invalidate_certificate(tenant_id)
 
     def reconciliation_required(self, tenant_id: UUID) -> bool:
         return tenant_id in self._reconciliation_required
@@ -144,7 +154,7 @@ class InvalidationRegistry:
             previous = self._versions.get(event.tenant_id, 0)
             if event.version <= previous:
                 return "DUPLICATE" if event.version == previous else "STALE"
-            self._certified_tenants.discard(event.tenant_id)
+            self._invalidate_certificate(event.tenant_id)
             if event.version > previous + 1:
                 self._reconciliation_required.add(event.tenant_id)
             callback = self._callbacks.get(
@@ -229,7 +239,7 @@ class InvalidationRegistry:
         """Apply a stable consumer snapshot between two authoritative reads."""
         async with self._locks[tenant_id]:
             was_certified = tenant_id in self._certified_tenants
-            self._certified_tenants.discard(tenant_id)
+            self._invalidate_certificate(tenant_id)
             try:
                 start_version = (await lookup(frozenset({tenant_id})))[tenant_id]
             except asyncio.CancelledError:
@@ -331,6 +341,22 @@ class RedisInvalidationSubscriber:
         self._stop = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
         self._pubsub = None
+        self._subscribed = False
+        self._subscription_epoch = 0
+
+    @property
+    def subscription_epoch(self) -> int:
+        """Change whenever a canonical subscription is established or lost."""
+        return self._subscription_epoch
+
+    @property
+    def ready(self) -> bool:
+        return (
+            self._subscribed
+            and self._task is not None
+            and not self._task.done()
+            and not self._stop.is_set()
+        )
 
     async def start(self) -> None:
         if self._task is None or self._task.done():
@@ -341,6 +367,9 @@ class RedisInvalidationSubscriber:
 
     async def stop(self) -> None:
         self._stop.set()
+        if self._subscribed:
+            self._subscribed = False
+            self._subscription_epoch += 1
         if self._task is not None:
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)
@@ -356,6 +385,8 @@ class RedisInvalidationSubscriber:
                 pubsub = self._redis.pubsub()
                 self._pubsub = pubsub
                 await pubsub.subscribe(M3_INVALIDATION_CHANNEL)
+                self._subscribed = True
+                self._subscription_epoch += 1
                 while not self._stop.is_set():
                     message = await pubsub.get_message(
                         ignore_subscribe_messages=True, timeout=1.0
@@ -376,6 +407,9 @@ class RedisInvalidationSubscriber:
                 logger.warning("Config invalidation subscriber reconnecting")
                 await asyncio.sleep(0.5)
             finally:
+                if self._subscribed:
+                    self._subscribed = False
+                    self._subscription_epoch += 1
                 if pubsub is not None:
                     await pubsub.aclose()
                 self._pubsub = None

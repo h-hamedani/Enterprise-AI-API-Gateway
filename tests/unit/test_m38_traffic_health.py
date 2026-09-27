@@ -10,7 +10,7 @@ from app.api import health
 @pytest.mark.parametrize(
     "configured,expected_status,expected_mode",
     [
-        ("NORMAL", 200, "DEGRADED"),
+        ("NORMAL", 200, "DEGRADED_REDIS"),
         ("DRAINING", 503, "DRAINING"),
     ],
 )

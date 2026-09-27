@@ -35,7 +35,16 @@ from app.control_plane.protection import ControlPlaneProtection
 from app.core.config import get_settings
 from app.core.errors import install_error_handlers
 from app.core.request_context import request_context_middleware
+from app.redis.circuit import CircuitConfig, RedisCircuitStore
+from app.redis.concurrency import RedisConcurrencySemaphore
 from app.redis.local_degraded import LocalDegradedProtection
+from app.redis.protection_facade import (
+    RecoveryCircuitStore,
+    RecoveryConcurrencySemaphore,
+    RecoveryRateLimiter,
+)
+from app.redis.rate_limit import RedisTokenBucket
+from app.redis.recovery import RecoveryCoordinator
 from app.redis.runtime import RedisRuntime
 
 if sys.platform == "win32":
@@ -61,14 +70,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.db_engine = db_engine
     app.state.redis = redis
     app.state.redis_runtime = redis_runtime
-    app.state.local_degraded_protection = LocalDegradedProtection(
-        max_entries=settings.degraded_local_max_entries_per_store,
-        lease_duration_ms=settings.concurrency_lease_duration_ms,
-    )
-    if settings.credential_hmac_secret is not None:
-        app.state.control_plane_protection = ControlPlaneProtection(
-            redis_runtime, settings, local=app.state.local_degraded_protection
+
+    def new_local_generation() -> LocalDegradedProtection:
+        return LocalDegradedProtection(
+            max_entries=settings.degraded_local_max_entries_per_store,
+            lease_duration_ms=settings.concurrency_lease_duration_ms,
         )
+
+    app.state.local_degraded_protection = new_local_generation()
     app.state.config_invalidation_publisher = RedisConfigInvalidationPublisher(redis)
     invalidation_registry = InvalidationRegistry()
     invalidation_subscriber = RedisInvalidationSubscriber(redis, invalidation_registry)
@@ -78,8 +87,42 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.invalidation_registry = invalidation_registry
     app.state.invalidation_subscriber = invalidation_subscriber
     app.state.config_reconciler = config_reconciler
+    recovery = RecoveryCoordinator(
+        redis_runtime,
+        invalidation_subscriber,
+        config_reconciler,
+        invalidation_registry,
+        local_factory=new_local_generation,
+        initial_local=app.state.local_degraded_protection,
+        lease_duration_ms=settings.concurrency_lease_duration_ms,
+    )
+    app.state.recovery_coordinator = recovery
+    circuit_config = CircuitConfig.from_settings(settings)
+    app.state.recovery_rate_limiter = RecoveryRateLimiter(
+        RedisTokenBucket(redis_runtime), recovery
+    )
+    app.state.recovery_concurrency = RecoveryConcurrencySemaphore(
+        RedisConcurrencySemaphore(
+            redis_runtime, settings.concurrency_lease_duration_ms
+        ),
+        recovery,
+    )
+    app.state.recovery_circuit = RecoveryCircuitStore(
+        RedisCircuitStore(redis_runtime, circuit_config),
+        recovery,
+        circuit_config,
+        normal_ttl_ms=settings.local_circuit_normal_completion_ttl_ms,
+    )
+    if settings.credential_hmac_secret is not None:
+        app.state.control_plane_protection = ControlPlaneProtection(
+            redis_runtime,
+            settings,
+            local=app.state.local_degraded_protection,
+            recovery=recovery,
+        )
     await invalidation_subscriber.start()
     await config_reconciler.start()
+    await recovery.start()
     app.state.runtime_mode = "NORMAL"
     if (
         settings.credential_hmac_secret is not None
@@ -118,6 +161,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        await recovery.stop()
         await config_reconciler.stop()
         await invalidation_subscriber.stop()
         await redis_runtime.close()
