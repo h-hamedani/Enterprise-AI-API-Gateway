@@ -45,11 +45,7 @@ def test_readiness_reports_outage_safely_and_recovers(monkeypatch) -> None:
     assert unavailable.status_code == 503
     assert unavailable.json() == {"status": "not_ready"}
     assert recovered.status_code == 200
-    assert recovered.json() == {
-        "status": "ready",
-        "postgres": "ok",
-        "redis": "ok",
-    }
+    assert recovered.json() == {"status": "ready"}
     serialized = unavailable.text + recovered.text
     assert "redis://" not in serialized
     assert "password" not in serialized

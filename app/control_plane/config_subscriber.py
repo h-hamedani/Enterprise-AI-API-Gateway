@@ -13,6 +13,13 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from app.redis.namespace import M3_INVALIDATION_CHANNEL
+from app.redis.telemetry import (
+    RESOURCE_KINDS,
+    BoundedEvent,
+    BoundedTelemetry,
+    LoggingBoundedTelemetry,
+    normalize_category,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -335,9 +342,16 @@ class InvalidationRegistry:
 
 
 class RedisInvalidationSubscriber:
-    def __init__(self, redis: Redis, registry: InvalidationRegistry) -> None:
+    def __init__(
+        self,
+        redis: Redis,
+        registry: InvalidationRegistry,
+        *,
+        telemetry: BoundedTelemetry | None = None,
+    ) -> None:
         self._redis = redis
         self._registry = registry
+        self._telemetry = telemetry or LoggingBoundedTelemetry()
         self._stop = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
         self._pubsub = None
@@ -387,6 +401,7 @@ class RedisInvalidationSubscriber:
                 await pubsub.subscribe(M3_INVALIDATION_CHANNEL)
                 self._subscribed = True
                 self._subscription_epoch += 1
+                self._record("connected")
                 while not self._stop.is_set():
                     message = await pubsub.get_message(
                         ignore_subscribe_messages=True, timeout=1.0
@@ -395,15 +410,18 @@ class RedisInvalidationSubscriber:
                         continue
                     event = parse_invalidation_event(message.get("data"))
                     if event is not None:
+                        self._record("received", event.resource_type)
                         try:
                             await self._registry.observe(event)
                         except asyncio.CancelledError:
                             raise
                         except Exception:  # noqa: BLE001 - isolate callbacks
+                            self._record("callback_failed")
                             logger.warning("Config invalidation callback failed")
             except asyncio.CancelledError:
                 raise
             except (RedisError, OSError, RuntimeError):
+                self._record("reconnecting")
                 logger.warning("Config invalidation subscriber reconnecting")
                 await asyncio.sleep(0.5)
             finally:
@@ -413,3 +431,12 @@ class RedisInvalidationSubscriber:
                 if pubsub is not None:
                     await pubsub.aclose()
                 self._pubsub = None
+
+    def _record(self, outcome: str, resource_type: str | None = None) -> None:
+        dimensions = {"operation": "subscribe", "outcome": outcome}
+        if resource_type is not None:
+            dimensions["resource_kind"] = normalize_category(
+                resource_type.lower(),
+                RESOURCE_KINDS,
+            )
+        self._telemetry.record(BoundedEvent("config_subscriber", dimensions))

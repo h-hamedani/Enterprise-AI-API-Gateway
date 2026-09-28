@@ -10,6 +10,8 @@ from typing import Protocol
 
 from redis.asyncio import Redis
 
+from app.redis.telemetry import BoundedEvent, bounded_dimension
+
 logger = logging.getLogger(__name__)
 
 
@@ -47,13 +49,21 @@ class LoggingRedisTelemetry:
     """Emit bounded dependency telemetry without connection or command details."""
 
     def record_operation(self, event: RedisTelemetryEvent) -> None:
+        safe = BoundedEvent(
+            "redis",
+            {
+                "operation": bounded_dimension("operation", event.operation),
+                "outcome": bounded_dimension("outcome", event.outcome),
+            },
+            latency_ms=event.latency_ms,
+        )
         logger.info(
             "Redis dependency operation",
             extra={
                 "dependency": "redis",
-                "operation_class": event.operation,
-                "operation_outcome": event.outcome,
-                "latency_ms": event.latency_ms,
+                "operation_class": safe.dimensions["operation"],
+                "operation_outcome": safe.dimensions["outcome"],
+                "latency_ms": safe.latency_ms,
             },
         )
 

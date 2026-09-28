@@ -12,6 +12,13 @@ from app.redis.namespace import (
     HISTORICAL_M2_INVALIDATION_CHANNEL,
     M3_INVALIDATION_CHANNEL,
 )
+from app.redis.telemetry import (
+    RESOURCE_KINDS,
+    BoundedEvent,
+    BoundedTelemetry,
+    LoggingBoundedTelemetry,
+    normalize_category,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +35,11 @@ class InvalidationPublisher(Protocol):
 class RedisConfigInvalidationPublisher:
     """Publish safe, best-effort config invalidations after database commit."""
 
-    def __init__(self, redis: Redis) -> None:
+    def __init__(
+        self, redis: Redis, *, telemetry: BoundedTelemetry | None = None
+    ) -> None:
         self._redis = redis
+        self._telemetry = telemetry or LoggingBoundedTelemetry()
 
     async def publish(self, mutation: CommittedMutation, *, request_id: UUID) -> bool:
         payload = json.dumps(
@@ -51,18 +61,36 @@ class RedisConfigInvalidationPublisher:
                 continue
             outcomes.append(True)
         if not any(outcomes):
+            self._record(mutation, "publish_failed")
             logger.error(
                 "Config invalidation publication failed",
                 extra={
                     "request_id": str(request_id),
-                    "tenant_id": str(mutation.tenant_id),
-                    "config_version": mutation.version,
-                    "resource_type": mutation.resource_type.value,
-                    "resource_id": str(mutation.resource_id),
                     "publication_outcome": "FAILED",
                 },
             )
             return False
         if not all(outcomes):
+            self._record(mutation, "partially_published")
             logger.warning("Config invalidation publication partially succeeded")
+        else:
+            self._record(mutation, "published")
         return True
+
+    def _record(self, mutation: CommittedMutation, outcome: str) -> None:
+        resource_type = getattr(mutation.resource_type, "value", None)
+        self._telemetry.record(
+            BoundedEvent(
+                "config_publication",
+                {
+                    "operation": "publish",
+                    "outcome": outcome,
+                    "resource_kind": normalize_category(
+                        resource_type.lower()
+                        if isinstance(resource_type, str)
+                        else None,
+                        RESOURCE_KINDS,
+                    ),
+                },
+            )
+        )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
@@ -15,6 +16,7 @@ from app.persistence.models.enums import RateScopeType
 from app.redis.namespace import REDIS_NAMESPACE_PREFIX
 from app.redis.redis_failure import is_redis_availability_failure
 from app.redis.runtime import RedisRuntime
+from app.redis.telemetry import bounded_dimension
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,22 @@ class RateLimitProtocolError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class PreAuthRateKey:
+    """Only the internal HMAC identity may override a rate-limit key."""
+
+    digest: str
+
+    def __post_init__(self) -> None:
+        if re.fullmatch(r"[0-9a-f]{64}", self.digest) is None:
+            raise RateLimitPolicyError("Pre-auth key identity is invalid.")
+
+    def render(self) -> str:
+        return (
+            f"{REDIS_NAMESPACE_PREFIX}adminpre:ADMIN_AUTH_PROTECTED:{{{self.digest}}}"
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ResolvedRatePolicy:
     policy_id: UUID
     tenant_id: UUID
@@ -61,7 +79,7 @@ class ResolvedRatePolicy:
     scope_id: UUID
     requests_per_window: int
     window_seconds: int
-    key_override: str | None = None
+    key_override: PreAuthRateKey | None = None
     degraded_factor: Decimal | None = None
 
     def __post_init__(self) -> None:
@@ -72,6 +90,12 @@ class ResolvedRatePolicy:
             raise RateLimitPolicyError("Policy identifiers must be UUID values.")
         if not isinstance(self.scope_type, RateScopeType):
             raise RateLimitPolicyError("Policy scope type is invalid.")
+        if self.key_override is not None and (
+            not isinstance(self.key_override, PreAuthRateKey)
+            or self.scope_type is not RateScopeType.ADMIN_TOKEN
+            or self.tenant_id != UUID(int=0)
+        ):
+            raise RateLimitPolicyError("Policy key override is invalid.")
         if (
             type(self.requests_per_window) is not int
             or self.requests_per_window <= 0
@@ -126,15 +150,18 @@ class LoggingRateLimitTelemetry:
             "Redis rate-limit evaluation",
             extra={
                 "limiter_operation": "token_bucket",
-                "limiter_outcome": event.outcome,
-                "scope_types": event.scope_types,
+                "limiter_outcome": bounded_dimension("outcome", event.outcome),
+                "scope_types": tuple(
+                    bounded_dimension("scope_type", scope)
+                    for scope in event.scope_types
+                ),
             },
         )
 
 
 def rate_limit_key(policy: ResolvedRatePolicy) -> str:
     if policy.key_override is not None:
-        return policy.key_override
+        return policy.key_override.render()
     return (
         f"{REDIS_NAMESPACE_PREFIX}rl:{{{policy.tenant_id}}}:"
         f"{policy.scope_type.value}:{policy.scope_id}"

@@ -15,12 +15,14 @@ from app.persistence.models import Base
 from app.persistence.models.enums import RateScopeType
 from app.redis.local_degraded import LocalDegradedProtection
 from app.redis.rate_limit import (
+    PreAuthRateKey,
     RateLimitDependencyError,
     RedisTokenBucket,
     ResolvedRatePolicy,
 )
 from app.redis.recovery import RecoveryCoordinator
 from app.redis.runtime import RedisRuntime
+from app.redis.telemetry import BoundedEvent, BoundedTelemetry, LoggingBoundedTelemetry
 
 PRE_AUTH_REQUESTS = 20
 PRE_AUTH_WINDOW_SECONDS = 60
@@ -63,7 +65,7 @@ def pre_auth_policy(client_ip: str, secret: bytes) -> ResolvedRatePolicy:
         scope_id=scope_id,
         requests_per_window=PRE_AUTH_REQUESTS,
         window_seconds=PRE_AUTH_WINDOW_SECONDS,
-        key_override=f"gw:v1:adminpre:{PRE_AUTH_CLASS}:{{{digest}}}",
+        key_override=PreAuthRateKey(digest),
     )
 
 
@@ -121,6 +123,7 @@ class ControlPlaneProtection:
         *,
         local: LocalDegradedProtection | None = None,
         recovery: RecoveryCoordinator | None = None,
+        telemetry: BoundedTelemetry | None = None,
     ) -> None:
         self._bucket = RedisTokenBucket(runtime)
         self._settings = settings
@@ -129,10 +132,17 @@ class ControlPlaneProtection:
             lease_duration_ms=settings.concurrency_lease_duration_ms,
         )
         self._recovery = recovery
+        self._telemetry = telemetry or LoggingBoundedTelemetry()
+
+    def _record_pre_auth(self, outcome: str) -> None:
+        self._telemetry.record(
+            BoundedEvent("pre_auth", {"operation": "evaluate", "outcome": outcome})
+        )
 
     async def pre_auth(self, request) -> None:
         secret = self._settings.credential_hmac_secret
         if secret is None:
+            self._record_pre_auth("dependency_error")
             raise GatewayHttpError(
                 503, "upstream_unavailable", "Dependency unavailable."
             )
@@ -141,13 +151,22 @@ class ControlPlaneProtection:
         try:
             key = base64.b64decode(secret, validate=True)
         except Exception:  # noqa: BLE001 - fail closed on invalid security config
+            self._record_pre_auth("dependency_error")
             raise GatewayHttpError(
                 503, "upstream_unavailable", "Dependency unavailable."
             ) from None
         policy = pre_auth_policy(
             resolve_client_ip(request, self._settings.trusted_proxy_cidrs), key
         )
-        await self._evaluate([policy], pre_auth=True)
+        try:
+            await self._evaluate([policy], pre_auth=True)
+        except GatewayHttpError as exc:
+            self._record_pre_auth(
+                "rejected" if exc.status_code == 429 else "dependency_error"
+            )
+            raise
+        else:
+            self._record_pre_auth("allowed")
 
     async def post_auth(self, request, context) -> None:
         policies = await enabled_admin_token_policies(

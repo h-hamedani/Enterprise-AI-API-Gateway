@@ -19,6 +19,7 @@ from app.persistence.models.normal_api import NormalApiRoute, NormalApiService
 from app.redis.namespace import REDIS_NAMESPACE_PREFIX
 from app.redis.redis_failure import is_redis_availability_failure
 from app.redis.runtime import RedisRuntime
+from app.redis.telemetry import bounded_dimension
 
 logger = logging.getLogger(__name__)
 _MAX_SAFE = 2**53 - 1
@@ -132,7 +133,7 @@ class CircuitIdentity:
         if any(
             not isinstance(value, UUID)
             for value in (tenant_id, target_id, dimension_id)
-        ):
+        ) or target_kind not in ("route", "provider_target"):
             raise CircuitContractError("Circuit identity is invalid.")
         identity = object.__new__(cls)
         object.__setattr__(identity, "tenant_id", tenant_id)
@@ -185,10 +186,10 @@ class LoggingCircuitTelemetry:
         logger.info(
             "Redis circuit operation",
             extra={
-                "operation_class": operation,
-                "operation_outcome": outcome,
-                "circuit_state": state,
-                "target_kind": target_kind,
+                "operation_class": bounded_dimension("operation", operation),
+                "operation_outcome": bounded_dimension("outcome", outcome),
+                "circuit_state": bounded_dimension("state", state),
+                "target_kind": bounded_dimension("target_kind", target_kind),
             },
         )
 

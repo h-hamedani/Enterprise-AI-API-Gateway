@@ -16,6 +16,7 @@ from app.persistence.models.enums import RateScopeType
 from app.redis.namespace import REDIS_NAMESPACE_PREFIX
 from app.redis.redis_failure import is_redis_availability_failure
 from app.redis.runtime import RedisRuntime
+from app.redis.telemetry import bounded_dimension
 
 logger = logging.getLogger(__name__)
 _MAX_PG_INTEGER = 2**31 - 1
@@ -116,9 +117,11 @@ class LoggingConcurrencyTelemetry:
         logger.info(
             "Redis concurrency operation",
             extra={
-                "operation_class": operation,
-                "operation_outcome": outcome,
-                "scope_types": scope_types,
+                "operation_class": bounded_dimension("operation", operation),
+                "operation_outcome": bounded_dimension("outcome", outcome),
+                "scope_types": tuple(
+                    bounded_dimension("scope_type", scope) for scope in scope_types
+                ),
             },
         )
 

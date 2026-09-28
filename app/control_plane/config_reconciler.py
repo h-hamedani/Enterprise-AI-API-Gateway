@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.control_plane.config_subscriber import InvalidationRegistry
 from app.persistence.models import Base
+from app.redis.telemetry import BoundedEvent, BoundedTelemetry, LoggingBoundedTelemetry
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +42,13 @@ class ConfigReconciler:
         *,
         delay_chooser: Callable[[], float] | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        telemetry: BoundedTelemetry | None = None,
     ) -> None:
         self._registry = registry
         self._lookup = lookup
         self._delay_chooser = delay_chooser or (lambda: random.uniform(27.0, 33.0))
         self._sleep = sleep
+        self._telemetry = telemetry or LoggingBoundedTelemetry()
         self._task: asyncio.Task[None] | None = None
 
     @property
@@ -57,6 +60,7 @@ class ConfigReconciler:
         tenant_ids = self._registry.tenant_ids()
         if not tenant_ids:
             logger.debug("Config version reconciliation outcome=empty_membership")
+            self._record("empty_membership")
             return "empty_membership"
         failed = False
         for tenant_id in tenant_ids:
@@ -74,7 +78,16 @@ class ConfigReconciler:
             "Config version reconciliation pass=%s",
             "pass_error" if failed else "pass_success",
         )
-        return "pass_error" if failed else "pass_success"
+        result = "pass_error" if failed else "pass_success"
+        self._record(result)
+        return result
+
+    def _record(self, outcome: str) -> None:
+        self._telemetry.record(
+            BoundedEvent(
+                "config_reconciliation", {"operation": "reconcile", "outcome": outcome}
+            )
+        )
 
     async def start(self) -> None:
         if not self.running:
@@ -99,5 +112,6 @@ class ConfigReconciler:
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001 - keep the managed task alive
+                self._record("pass_error")
                 logger.warning("Config version reconciliation pass failed")
             await self._sleep(self._delay_chooser())

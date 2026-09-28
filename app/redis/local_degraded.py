@@ -34,6 +34,7 @@ from app.redis.rate_limit import (
     RedisTokenBucket,
     ResolvedRatePolicy,
 )
+from app.redis.telemetry import bounded_dimension
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,9 @@ class LocalDegradedTelemetry(Protocol):
 
 class LoggingLocalDegradedTelemetry:
     def record(self, store: str, outcome: str) -> None:
+        store = bounded_dimension("store", store)
+        if outcome != "local_capacity_exhausted":
+            raise ValueError("Local degraded telemetry outcome is invalid.")
         logger.warning(
             "local degraded protection event protection_store=%s protection_outcome=%s",
             store,

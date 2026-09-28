@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 
 from app.redis.circuit import CircuitState
 from app.redis.local_degraded import LocalDegradedProtection
+from app.redis.telemetry import BoundedEvent, BoundedTelemetry, LoggingBoundedTelemetry
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,7 @@ class RecoveryCoordinator:
         cadence_seconds: float = 1.0,
         reconcile_timeout_seconds: float = 30.0,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        telemetry: BoundedTelemetry | None = None,
     ) -> None:
         if cadence_seconds < 1.0:
             raise ValueError("Recovery cadence must be at least one second.")
@@ -95,6 +97,7 @@ class RecoveryCoordinator:
         self._cadence_seconds = cadence_seconds
         self._reconcile_timeout_seconds = reconcile_timeout_seconds
         self._sleep = sleep
+        self._telemetry = telemetry or LoggingBoundedTelemetry()
         self._mode = TrafficMode.NORMAL
         self._active: LocalDegradedProtection | None = None
         self._active_id: int | None = None
@@ -173,7 +176,13 @@ class RecoveryCoordinator:
             self._active_id = self._next_generation
             self._next_generation += 1
             self._active.mark_unreachable()
-        self._mode = TrafficMode.DEGRADED_REDIS
+        self._set_mode(TrafficMode.DEGRADED_REDIS)
+
+    def _set_mode(self, mode: TrafficMode) -> None:
+        if self._mode is mode:
+            return
+        self._mode = mode
+        self._telemetry.record(BoundedEvent("traffic", {"mode": mode.value}))
 
     @asynccontextmanager
     async def admission(self) -> AsyncIterator[LocalDegradedProtection | None]:
@@ -183,20 +192,21 @@ class RecoveryCoordinator:
 
     async def attempt_recovery(self) -> str:
         if self._attempt_lock.locked():
-            return "recovery_in_progress"
+            return self._recovery_outcome("recovery_in_progress")
         async with self._attempt_lock:
             if self._mode is not TrafficMode.DEGRADED_REDIS:
-                return "not_degraded"
+                return self._recovery_outcome("not_degraded")
+            self._recovery_outcome("recovery_started")
             if not (await self._redis_runtime.check()).available:
-                return "redis_not_ready"
+                return self._recovery_outcome("redis_not_ready")
             async with self._admission_lock:
                 if self._mode is not TrafficMode.DEGRADED_REDIS:
-                    return "not_degraded"
+                    return self._recovery_outcome("not_degraded")
                 active = self._active
-                self._mode = TrafficMode.RECOVERING_REDIS
+                self._set_mode(TrafficMode.RECOVERING_REDIS)
             try:
                 if not self._subscriber.ready:
-                    return "subscriber_not_ready"
+                    return self._recovery_outcome("subscriber_not_ready")
                 subscription_epoch = getattr(self._subscriber, "subscription_epoch", 0)
                 members = self._registry.tenant_ids()
                 try:
@@ -205,23 +215,23 @@ class RecoveryCoordinator:
                         timeout=self._reconcile_timeout_seconds,
                     )
                 except TimeoutError:
-                    return "config_reconciliation_timeout"
+                    return self._recovery_outcome("config_reconciliation_timeout")
                 if outcome == "pass_error" or any(
                     not self._registry.is_tenant_reconciled(tenant)
                     for tenant in members
                 ):
-                    return "config_not_reconciled"
+                    return self._recovery_outcome("config_not_reconciled")
                 epoch = self._registry.invalidation_epoch
                 async with self._admission_lock:
                     if not (await self._redis_runtime.check()).available:
-                        return "final_redis_check_failed"
+                        return self._recovery_outcome("final_redis_check_failed")
                     if not self._subscriber.ready:
-                        return "subscriber_not_ready"
+                        return self._recovery_outcome("subscriber_not_ready")
                     if (
                         getattr(self._subscriber, "subscription_epoch", 0)
                         != subscription_epoch
                     ):
-                        return "subscriber_reconnected"
+                        return self._recovery_outcome("subscriber_reconnected")
                     if (
                         self._registry.invalidation_epoch != epoch
                         or self._registry.tenant_ids() != members
@@ -230,21 +240,25 @@ class RecoveryCoordinator:
                             for tenant in members
                         )
                     ):
-                        return "certificate_invalidated"
+                        return self._recovery_outcome("certificate_invalidated")
                     if (
                         self._mode is not TrafficMode.RECOVERING_REDIS
                         or self._active is not active
                     ):
-                        return "recovery_interrupted"
+                        return self._recovery_outcome("recovery_interrupted")
                     assert self._active_id is not None
                     self._retired[self._active_id] = active
                     self._active = None
                     self._active_id = None
-                    self._mode = TrafficMode.NORMAL
-                    return "recovery_succeeded"
+                    self._set_mode(TrafficMode.NORMAL)
+                    return self._recovery_outcome("recovery_succeeded")
             finally:
                 if self._mode is TrafficMode.RECOVERING_REDIS:
-                    self._mode = TrafficMode.DEGRADED_REDIS
+                    self._set_mode(TrafficMode.DEGRADED_REDIS)
+
+    def _recovery_outcome(self, outcome: str) -> str:
+        self._telemetry.record(BoundedEvent("recovery", {"outcome": outcome}))
+        return outcome
 
     async def start(self) -> None:
         if self._task is None or self._task.done():
@@ -266,4 +280,5 @@ class RecoveryCoordinator:
                 except asyncio.CancelledError:
                     raise
                 except Exception:  # noqa: BLE001 - bounded retry, no raw details
+                    self._recovery_outcome("recovery_failed")
                     logger.warning("Redis recovery attempt failed")

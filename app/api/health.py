@@ -20,10 +20,11 @@ async def health_live() -> dict[str, str]:
 
 async def _check_postgres(engine: AsyncEngine) -> bool:
     try:
-        async with engine.connect() as connection:
-            await connection.execute(text("SELECT 1"))
+        async with asyncio.timeout(1.0):
+            async with engine.connect() as connection:
+                await connection.execute(text("SELECT 1"))
         return True
-    except SQLAlchemyError:
+    except (SQLAlchemyError, TimeoutError):
         return False
 
 
@@ -41,11 +42,7 @@ async def health_ready(request: Request) -> JSONResponse:
     if postgres_ok and redis_available:
         return JSONResponse(
             status_code=200,
-            content={
-                "status": "ready",
-                "postgres": "ok",
-                "redis": "ok",
-            },
+            content={"status": "ready"},
         )
 
     return JSONResponse(

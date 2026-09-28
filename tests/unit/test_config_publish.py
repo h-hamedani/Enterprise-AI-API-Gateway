@@ -37,8 +37,9 @@ async def test_publisher_uses_frozen_channel_and_safe_payload():
         resource_id=uuid4(),
     )
 
+    request_id = uuid4()
     published = await RedisConfigInvalidationPublisher(redis).publish(
-        mutation, request_id=uuid4()
+        mutation, request_id=request_id
     )
 
     assert published is True
@@ -83,13 +84,17 @@ async def test_publish_failure_is_best_effort_and_secret_safe(caplog, monkeypatc
         resource_id=uuid4(),
     )
 
+    request_id = uuid4()
     published = await RedisConfigInvalidationPublisher(redis).publish(
-        mutation, request_id=uuid4()
+        mutation, request_id=request_id
     )
 
     assert published is False
     assert "provider-secret-must-not-be-logged" not in caplog.text
     assert "Config invalidation publication failed" in caplog.text
+    assert str(mutation.tenant_id) not in str(caplog.records[0].__dict__)
+    assert str(mutation.resource_id) not in str(caplog.records[0].__dict__)
+    assert caplog.records[0].request_id == str(request_id)
 
 
 @pytest.mark.asyncio

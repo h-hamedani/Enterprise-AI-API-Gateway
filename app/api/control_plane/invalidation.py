@@ -25,10 +25,6 @@ async def publish_committed_mutation(
             "Config invalidation publisher is unavailable",
             extra={
                 "request_id": str(request_id),
-                "tenant_id": str(mutation.tenant_id),
-                "config_version": mutation.version,
-                "resource_type": mutation.resource_type.value,
-                "resource_id": str(mutation.resource_id),
                 "publication_outcome": "UNAVAILABLE",
             },
         )
@@ -40,10 +36,6 @@ async def publish_committed_mutation(
             "Config invalidation publisher failed unexpectedly",
             extra={
                 "request_id": str(request_id),
-                "tenant_id": str(mutation.tenant_id),
-                "config_version": mutation.version,
-                "resource_type": mutation.resource_type.value,
-                "resource_id": str(mutation.resource_id),
                 "publication_outcome": "FAILED",
             },
         )

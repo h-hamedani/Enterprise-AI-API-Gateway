@@ -156,7 +156,7 @@ async def test_local_lease_renews_and_releases_to_issuing_generation_after_cutov
 
 
 @pytest.mark.asyncio
-async def test_unknown_lease_and_circuit_handle_never_call_backend():
+async def test_unknown_lease_and_circuit_handle_never_call_backend(caplog):
     clock = Clock()
     owner = coordinator(clock)
     redis = RedisBackend()
@@ -168,10 +168,13 @@ async def test_unknown_lease_and_circuit_handle_never_call_backend():
     identity = CircuitIdentity._create(uuid4(), "route", uuid4(), uuid4())
     assert not (await semaphore.renew([item], uuid4())).renewed
     assert not (await semaphore.release([item], uuid4())).released
-    unknown = await circuit.record_success(identity, uuid4())
+    unknown_token = uuid4()
+    unknown = await circuit.record_success(identity, unknown_token)
     assert unknown.disposition is CircuitCompletionDisposition.UNKNOWN_HANDLE
     assert unknown.resulting_state is None and not unknown.applied
     assert redis.calls == []
+    assert str(unknown_token) not in caplog.text
+    assert str(identity.tenant_id) not in caplog.text
 
 
 @pytest.mark.asyncio
