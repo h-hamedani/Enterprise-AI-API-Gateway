@@ -1,0 +1,4 @@
+# Audited synthetic idempotency-key fixture in c7a4e341; history-only findings.
+c7a4e341f9bbafe097b814664130400e714a9389:tests/integration/test_llm_credential_rotation.py:generic-api-key:87
+c7a4e341f9bbafe097b814664130400e714a9389:tests/integration/test_llm_credential_rotation.py:generic-api-key:95
+c7a4e341f9bbafe097b814664130400e714a9389:tests/integration/test_llm_credential_rotation.py:generic-api-key:127

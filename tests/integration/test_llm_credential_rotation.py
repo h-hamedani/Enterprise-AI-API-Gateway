@@ -78,13 +78,14 @@ def test_rotation_is_encrypted_tenant_scoped_atomic_and_idempotent():
         request = ProviderCredentialWrite(
             secret="provider-secret", secret_type="API_KEY"
         )
+        synthetic_idempotency_key = f"test-idempotency-{uuid4()}"
         first = service.rotate_credential(
             connection,
             tenant_id=tenant_a,
             admin_user_id=admin_id,
             target_id=target.id,
             request=request,
-            raw_idempotency_key="m28-rotation-key",
+            raw_idempotency_key=synthetic_idempotency_key,
         )
         replay = service.rotate_credential(
             connection,
@@ -92,7 +93,7 @@ def test_rotation_is_encrypted_tenant_scoped_atomic_and_idempotent():
             admin_user_id=admin_id,
             target_id=target.id,
             request=request,
-            raw_idempotency_key="m28-rotation-key",
+            raw_idempotency_key=synthetic_idempotency_key,
         )
         assert replay.replayed and replay.response == first.response
         credential_id = UUID(json.loads(first.response.body)["id"])
@@ -124,7 +125,7 @@ def test_rotation_is_encrypted_tenant_scoped_atomic_and_idempotent():
                 admin_user_id=admin_id,
                 target_id=target.id,
                 request=ProviderCredentialWrite(secret="different"),
-                raw_idempotency_key="m28-rotation-key",
+                raw_idempotency_key=synthetic_idempotency_key,
             )
         with pytest.raises(LlmRegistryNotFoundError):
             service.rotate_credential(
