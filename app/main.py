@@ -36,6 +36,7 @@ from app.core.config import get_settings
 from app.core.errors import install_error_handlers
 from app.core.request_context import request_context_middleware
 from app.redis.circuit import CircuitConfig, RedisCircuitStore
+from app.redis.circuit_cleanup import CircuitAuthorityRepository, CircuitOrphanSweeper
 from app.redis.concurrency import RedisConcurrencySemaphore
 from app.redis.local_degraded import LocalDegradedProtection
 from app.redis.protection_facade import (
@@ -113,6 +114,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         circuit_config,
         normal_ttl_ms=settings.local_circuit_normal_completion_ttl_ms,
     )
+    circuit_orphan_sweeper = CircuitOrphanSweeper(
+        redis, CircuitAuthorityRepository(db_engine).lookup
+    )
+    app.state.circuit_orphan_sweeper = circuit_orphan_sweeper
     if settings.credential_hmac_secret is not None:
         app.state.control_plane_protection = ControlPlaneProtection(
             redis_runtime,
@@ -123,6 +128,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await invalidation_subscriber.start()
     await config_reconciler.start()
     await recovery.start()
+    await circuit_orphan_sweeper.start()
     app.state.runtime_mode = "NORMAL"
     if (
         settings.credential_hmac_secret is not None
@@ -161,6 +167,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        await circuit_orphan_sweeper.stop()
         await recovery.stop()
         await config_reconciler.stop()
         await invalidation_subscriber.stop()
