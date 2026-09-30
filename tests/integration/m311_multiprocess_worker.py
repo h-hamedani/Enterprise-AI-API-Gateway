@@ -20,12 +20,36 @@ from app.core.config import get_settings
 from app.main import create_app
 from app.persistence.models import Base
 from app.persistence.models.enums import RateScopeType
-from app.redis.circuit import CircuitIdentity
+from app.redis.circuit import CircuitIdentity, circuit_key
+from app.redis.circuit_cleanup import CircuitAuthority, circuit_failure_key
 from app.redis.concurrency import ResolvedConcurrencyPolicy
 from app.redis.protection_facade import CircuitCompletionHandle, ConcurrencyHandle
 from app.redis.rate_limit import ResolvedRatePolicy
 from app.redis.recovery import Backend
 from app.redis.telemetry import RecordingTelemetry
+
+
+class SweepProbe:
+    """Test-only Redis call recorder; all operations still reach real Redis."""
+
+    def __init__(self, redis, target: CircuitIdentity):
+        self.redis = redis
+        self.target_keys = (circuit_key(target), circuit_failure_key(target))
+        self.scan_calls = 0
+        self.returned_entries = 0
+        self.delete_counts: list[int] = []
+
+    async def scan(self, **kwargs):
+        self.scan_calls += 1
+        cursor, page = await self.redis.scan(**kwargs)
+        self.returned_entries += len(page)
+        return cursor, page
+
+    async def delete(self, *keys):
+        count = await self.redis.delete(*keys)
+        if keys == self.target_keys:
+            self.delete_counts.append(count)
+        return count
 
 
 class Worker:
@@ -40,6 +64,15 @@ class Worker:
         self.reconcile_gate.set()
         self.reconcile_entered = asyncio.Event()
         self.telemetry = RecordingTelemetry()
+        self.sweep_target: CircuitIdentity | None = None
+        self.sweep_observed: CircuitIdentity | None = None
+        self.sweep_initial: CircuitAuthority | None = None
+        self.sweep_final: CircuitAuthority | None = None
+        self.sweep_lookup_calls = 0
+        self.sweep_initial_pending = 0
+        self.sweep_entered = asyncio.Event()
+        self.sweep_release = asyncio.Event()
+        self.sweep_probe: SweepProbe | None = None
         for component in (
             app.state.recovery_coordinator,
             app.state.invalidation_subscriber,
@@ -282,6 +315,65 @@ class Worker:
             self.original_client = None
             self.refused_client = None
             return {"restored": True}
+        if command == "arm_sweep":
+            assert self.sweep_target is None
+            sweeper = app.state.circuit_orphan_sweeper
+            await sweeper.stop()
+            assert not sweeper.running
+            self.sweep_target = self.identity(data)
+            original_lookup = sweeper._lookup
+
+            async def fenced_lookup(identity):
+                result = await original_lookup(identity)
+                if identity == self.sweep_target:
+                    self.sweep_lookup_calls += 1
+                    if self.sweep_lookup_calls == 1:
+                        self.sweep_observed = identity
+                        self.sweep_initial = result
+                        if result is CircuitAuthority.RETIRED:
+                            self.sweep_entered.set()
+                            await self.sweep_release.wait()
+                    elif self.sweep_lookup_calls == 2:
+                        self.sweep_final = result
+                return result
+
+            sweeper._lookup = fenced_lookup
+            self.sweep_initial_pending = len(sweeper._pending)
+            self.sweep_probe = SweepProbe(sweeper._redis, self.sweep_target)
+            sweeper._redis = self.sweep_probe
+            return {"armed": True, "background_sweeper_running": sweeper.running}
+        if command == "sweep_fence_state":
+            sweeper = app.state.circuit_orphan_sweeper
+            return {
+                "entered": self.sweep_entered.is_set(),
+                "identity": {
+                    "tenant": str(self.sweep_observed.tenant_id),
+                    "route": str(self.sweep_observed.target_id),
+                    "service": str(self.sweep_observed.dimension_id),
+                }
+                if self.sweep_observed is not None
+                else None,
+                "initial": self.sweep_initial.value
+                if self.sweep_initial is not None
+                else None,
+                "final": self.sweep_final.value
+                if self.sweep_final is not None
+                else None,
+                "lookup_calls": self.sweep_lookup_calls,
+                "scan_calls": self.sweep_probe.scan_calls,
+                "returned_entries": self.sweep_probe.returned_entries,
+                "initial_pending": self.sweep_initial_pending,
+                "pending_entries": len(sweeper._pending),
+                "delete_counts": self.sweep_probe.delete_counts,
+                "max_candidates": sweeper._max_candidates,
+                "max_scan_calls": sweeper._max_scan_calls,
+                "max_entries_examined": sweeper._max_entries_examined,
+                "background_sweeper_running": sweeper.running,
+            }
+        if command == "release_sweep_fence":
+            assert self.sweep_entered.is_set()
+            self.sweep_release.set()
+            return {"released": True}
         if command == "sweep":
             return {"examined": await app.state.circuit_orphan_sweeper.reconcile_once()}
         raise ValueError("Unknown acceptance command")

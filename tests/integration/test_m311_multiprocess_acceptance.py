@@ -27,7 +27,11 @@ from app.core.config import get_settings
 from app.persistence.models import Base
 from app.persistence.models.enums import RateScopeType
 from app.redis.circuit import CircuitIdentity, circuit_key
-from app.redis.circuit_cleanup import circuit_failure_key
+from app.redis.circuit_cleanup import (
+    CircuitAuthority,
+    CircuitAuthorityRepository,
+    circuit_failure_key,
+)
 from app.redis.concurrency import ResolvedConcurrencyPolicy, semaphore_key
 from app.redis.namespace import M3_INVALIDATION_CHANNEL
 from app.redis.rate_limit import ResolvedRatePolicy, rate_limit_key
@@ -614,3 +618,95 @@ async def test_two_real_processes_share_redis_and_isolate_recovery(monkeypatch):
 
 async def _subscriber_ready(port):
     return (await _command(port, cmd="health"))["subscriber"]
+
+
+@pytest.mark.asyncio
+async def test_same_orphan_is_discovered_by_both_sweepers_before_delete():
+    """Fence the first real PostgreSQL lookup, never the final revalidation."""
+    settings = get_settings()
+    db = create_async_engine(settings.postgres_dsn)
+    redis = Redis.from_url(settings.redis_url, decode_responses=True)
+    identity = CircuitIdentity._create(uuid4(), "route", uuid4(), uuid4())
+    data = _circuit(identity.tenant_id, identity.dimension_id, identity.target_id)
+    primary = circuit_key(identity)
+    failures = circuit_failure_key(identity)
+    processes = []
+    sweep_tasks = []
+    try:
+        assert await redis.ping()
+        assert await CircuitAuthorityRepository(db).lookup(identity) is (
+            CircuitAuthority.RETIRED
+        )
+        process_a, a, ready_a = await _start_worker()
+        processes.append(process_a)
+        process_b, b, ready_b = await _start_worker()
+        processes.append(process_b)
+        assert ready_a["pid"] != ready_b["pid"]
+
+        for port in (a, b):
+            armed = await _command(port, cmd="arm_sweep", **data)
+            assert armed["armed"]
+            assert not armed["background_sweeper_running"]
+        await redis.hset(primary, mapping={"state": "CLOSED"})
+        await redis.zadd(failures, {"synthetic": 1})
+        assert await redis.exists(primary, failures) == 2
+
+        async def paused(port):
+            state = await _command(port, cmd="sweep_fence_state")
+            return state if state["entered"] else None
+
+        sweep_tasks.append(asyncio.create_task(_command(a, cmd="sweep")))
+        paused_a = await _until("A first retired lookup", lambda: paused(a))
+        sweep_tasks.append(asyncio.create_task(_command(b, cmd="sweep")))
+        paused_b = await _until("B first retired lookup", lambda: paused(b))
+
+        for state in (paused_a, paused_b):
+            assert not state["background_sweeper_running"]
+            assert state["identity"] == data
+            assert state["initial"] == "RETIRED"
+            assert state["lookup_calls"] == 1
+            assert state["final"] is None
+            assert state["delete_counts"] == []
+        assert await redis.exists(primary, failures) == 2
+
+        await asyncio.gather(
+            _command(a, cmd="release_sweep_fence"),
+            _command(b, cmd="release_sweep_fence"),
+        )
+        outcomes = await asyncio.gather(*sweep_tasks)
+        assert all(1 <= outcome["examined"] <= 128 for outcome in outcomes)
+        completed = await asyncio.gather(
+            _command(a, cmd="sweep_fence_state"),
+            _command(b, cmd="sweep_fence_state"),
+        )
+        for state in completed:
+            assert not state["background_sweeper_running"]
+            assert state["identity"] == data
+            assert state["initial"] == "RETIRED"
+            assert state["final"] == "RETIRED"
+            assert state["lookup_calls"] == 2
+            assert len(state["delete_counts"]) == 1
+            assert state["scan_calls"] <= state["max_scan_calls"]
+            assert (
+                1
+                <= state["initial_pending"]
+                + state["returned_entries"]
+                - state["pending_entries"]
+                <= state["max_entries_examined"]
+            )
+        assert sorted(
+            count for state in completed for count in state["delete_counts"]
+        ) == [0, 2]
+        assert await redis.exists(primary) == 0
+        assert await redis.exists(failures) == 0
+    finally:
+        for task in sweep_tasks:
+            if not task.done():
+                task.cancel()
+        if sweep_tasks:
+            await asyncio.gather(*sweep_tasks, return_exceptions=True)
+        for proc in reversed(processes):
+            await _stop_worker(proc)
+        await redis.delete(primary, failures)
+        await redis.aclose()
+        await db.dispose()
