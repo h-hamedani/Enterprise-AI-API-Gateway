@@ -2,6 +2,7 @@ from pathlib import Path
 
 import yaml
 
+from app.main import create_app
 from app.persistence.models import Base
 
 OPENAPI_PATH = (
@@ -86,6 +87,56 @@ def test_route_schemas_are_method_specific_and_expose_physical_configuration() -
     assert "upstream_path_template" in route_create["required"]
     assert "method" in schemas["RoutePatch"]["properties"]
     assert schemas["Route"]["allOf"][0]["$ref"].endswith("/RouteCreate")
+
+
+def test_route_header_policy_openapi_is_nullable_and_strict() -> None:
+    schemas = _document()["components"]["schemas"]
+    for schema_name in ("RouteCreate", "RoutePatch"):
+        policy = schemas[schema_name]["properties"]["header_policy"]
+        assert policy["type"] == ["object", "null"]
+        assert policy["required"] == ["request_allowlist"]
+        assert policy["additionalProperties"] is False
+        names = policy["properties"]["request_allowlist"]
+        assert names["type"] == "array"
+        assert names["uniqueItems"] is True
+        assert names["items"]["type"] == "string"
+        assert names["items"]["minLength"] == 1
+        assert names["items"]["pattern"]
+    assert "header_policy" in schemas["Route"]["allOf"][1]["required"]
+
+
+def test_generated_openapi_route_policy_matches_static_contract() -> None:
+    generated = create_app().openapi()["components"]["schemas"]
+    static = _document()["components"]["schemas"]
+    generated_policy = generated["RouteHeaderPolicy"]
+    generated_names = generated_policy["properties"]["request_allowlist"]
+    for name in ("RouteCreate", "RoutePatch"):
+        static_usage = static[name]["properties"]["header_policy"]
+        generated_usage = generated[name]["properties"]["header_policy"]
+        assert {item.get("type") for item in generated_usage["anyOf"]} == {
+            None,
+            "null",
+        }
+        assert {item.get("$ref") for item in generated_usage["anyOf"]} == {
+            None,
+            "#/components/schemas/RouteHeaderPolicy",
+        }
+        assert static_usage["type"] == ["object", "null"]
+        assert generated_policy["type"] == "object"
+        assert (
+            generated_policy["additionalProperties"]
+            == static_usage["additionalProperties"]
+        )
+        assert generated_policy["required"] == static_usage["required"]
+        static_names = static_usage["properties"]["request_allowlist"]
+        for key in ("type", "uniqueItems"):
+            assert generated_names[key] == static_names[key]
+        for key in ("type", "minLength", "pattern"):
+            assert generated_names["items"][key] == static_names["items"][key]
+        assert "case-insensitive" in generated_names["description"]
+        assert "case-insensitive" in static_usage["description"]
+    assert "header_policy" in generated["RouteResponse"]["required"]
+    assert "header_policy" in static["Route"]["allOf"][1]["required"]
 
 
 def test_normal_api_endpoint_paths_are_unchanged() -> None:

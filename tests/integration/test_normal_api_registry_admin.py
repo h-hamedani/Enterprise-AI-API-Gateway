@@ -4,7 +4,8 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import insert, select
+from pydantic import ValidationError
+from sqlalchemy import insert, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.control_plane.normal_api_registry import (
@@ -149,13 +150,13 @@ def test_method_specific_route_identity_relationship_and_patch(
             path_pattern="/orders/{id}",
             method="GET",
             upstream_path_template="/v1/orders/{id}",
-            header_policy={"mode": "metadata-only"},
+            header_policy={"request_allowlist": ["accept"]},
             priority=0,
         ),
     )
     assert route.method == "GET"
     assert route.upstream_path_template == "/v1/orders/{id}"
-    assert route.header_policy == {"mode": "metadata-only"}
+    assert route.header_policy.request_allowlist == ["accept"]
 
     patched = registry.patch_route(
         connection,
@@ -180,6 +181,58 @@ def test_method_specific_route_identity_relationship_and_patch(
                 priority=0,
             ),
         )
+
+
+def test_route_policy_legacy_read_fails_closed_and_explicit_patch_repairs(
+    registry_fixture,
+) -> None:
+    connection, registry, tenant_a, _, _, _ = registry_fixture
+    service_id = _create_service(connection, registry, tenant_a)
+    route = registry.create_route(
+        connection,
+        tenant_id=tenant_a,
+        request=RouteCreate(
+            service_id=service_id,
+            path_pattern="/legacy",
+            method="GET",
+            upstream_path_template="/legacy",
+            priority=0,
+        ),
+    )
+    assert route.header_policy is None
+    table = Base.metadata.tables["normal_api_routes"]
+    connection.execute(
+        update(table)
+        .where(table.c.id == route.id)
+        .values(header_policy={"mode": "metadata-only"})
+    )
+    with pytest.raises(ValidationError):
+        registry.get_route(connection, tenant_id=tenant_a, route_id=route.id)
+    with pytest.raises(ValidationError):
+        registry.list_routes(connection, tenant_id=tenant_a, limit=50, cursor=None)
+    with pytest.raises(ValidationError), connection.begin_nested():
+        registry.patch_route(
+            connection,
+            tenant_id=tenant_a,
+            route_id=route.id,
+            patch=RoutePatch(method="POST"),
+        )
+    assert (
+        connection.execute(
+            select(table.c.method).where(table.c.id == route.id)
+        ).scalar_one()
+        == "GET"
+    )
+    repaired = registry.patch_route(
+        connection,
+        tenant_id=tenant_a,
+        route_id=route.id,
+        patch=RoutePatch(header_policy={"request_allowlist": ["Accept"]}),
+    )
+    assert repaired.header_policy.request_allowlist == ["accept"]
+    assert connection.execute(
+        select(table.c.header_policy).where(table.c.id == route.id)
+    ).scalar_one() == {"request_allowlist": ["accept"]}
 
 
 def test_credential_encryption_rotation_none_and_failure_safety(

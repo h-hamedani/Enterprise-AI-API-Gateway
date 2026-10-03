@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -184,12 +185,64 @@ class ServicePage(BaseModel):
     next_cursor: str | None
 
 
+_HEADER_TOKEN = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+_FORBIDDEN_REQUEST_HEADERS = frozenset(
+    {
+        "authorization",
+        "proxy-authorization",
+        "proxy-authenticate",
+        "host",
+        "content-length",
+        "cookie",
+        "forwarded",
+        "x-request-id",
+        "connection",
+        "keep-alive",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+    }
+)
+
+
+class RouteHeaderPolicy(StrictModel):
+    request_allowlist: list[
+        Annotated[str, Field(min_length=1, pattern=_HEADER_TOKEN.pattern)]
+    ] = Field(
+        json_schema_extra={"uniqueItems": True},
+        description=(
+            "Header names are case-insensitive; duplicate and mandatory-stripped "
+            "names are rejected by runtime validation. Accepted names are lowercase."
+        ),
+    )
+
+    @field_validator("request_allowlist")
+    @classmethod
+    def validate_allowlist(cls, names: list[str]) -> list[str]:
+        canonical: list[str] = []
+        seen: set[str] = set()
+        for name in names:
+            if not _HEADER_TOKEN.fullmatch(name):
+                raise ValueError("Invalid header name.")
+            lowered = name.lower()
+            if (
+                lowered in _FORBIDDEN_REQUEST_HEADERS
+                or lowered.startswith(("x-forwarded-", "x-gateway-"))
+                or lowered in seen
+            ):
+                raise ValueError("Forbidden or duplicate header name.")
+            seen.add(lowered)
+            canonical.append(lowered)
+        return canonical
+
+
 class RouteCreate(StrictModel):
     service_id: UUID
     path_pattern: str = Field(min_length=1, max_length=2048, pattern=r"^/")
     method: HttpMethod
     upstream_path_template: str = Field(min_length=1, max_length=1024)
-    header_policy: dict | None = None
+    header_policy: RouteHeaderPolicy | None = None
     priority: int = Field(ge=0)
     timeout_ms: int | None = Field(default=None, ge=1)
     status: ServiceStatus = "ACTIVE"
@@ -203,7 +256,7 @@ class RoutePatch(StrictModel):
     upstream_path_template: str | None = Field(
         default=None, min_length=1, max_length=1024
     )
-    header_policy: dict | None = None
+    header_policy: RouteHeaderPolicy | None = None
     priority: int | None = Field(default=None, ge=0)
     timeout_ms: int | None = Field(default=None, ge=1)
     status: ServiceStatus | None = None
@@ -224,7 +277,7 @@ class RouteResponse(BaseModel):
     path_pattern: str
     method: HttpMethod
     upstream_path_template: str
-    header_policy: dict | None
+    header_policy: RouteHeaderPolicy | None
     priority: int
     timeout_ms: int | None
     status: ServiceStatus

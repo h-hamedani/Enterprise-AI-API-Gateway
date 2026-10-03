@@ -2257,7 +2257,18 @@ components:
           type:
           - object
           - 'null'
-          additionalProperties: true
+          required:
+          - request_allowlist
+          additionalProperties: false
+          properties:
+            request_allowlist:
+              type: array
+              uniqueItems: true
+              items:
+                type: string
+                minLength: 1
+                pattern: "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+          description: Header names are case-insensitive; duplicate or mandatory-stripped names are rejected, and accepted names are stored lowercase.
           default: null
         priority:
           type: integer
@@ -2296,7 +2307,18 @@ components:
           type:
           - object
           - 'null'
-          additionalProperties: true
+          required:
+          - request_allowlist
+          additionalProperties: false
+          properties:
+            request_allowlist:
+              type: array
+              uniqueItems: true
+              items:
+                type: string
+                minLength: 1
+                pattern: "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+          description: Header names are case-insensitive; duplicate or mandatory-stripped names are rejected, and accepted names are stored lowercase.
         priority:
           type: integer
           minimum: 0
@@ -2314,6 +2336,9 @@ components:
       allOf:
       - $ref: '#/components/schemas/RouteCreate'
       - type: object
+        required:
+        - id
+        - header_policy
         properties:
           id:
             type: string
