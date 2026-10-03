@@ -3,7 +3,7 @@ import binascii
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     circuit_successes_to_close: int = Field(default=1, strict=True, ge=1, le=1)
     circuit_probe_lease_duration_ms: int = Field(default=30000, strict=True, gt=0)
     trusted_proxy_cidrs: tuple[str, ...] = ()
+    normal_api_upstream_max_connections: int = Field(default=100, ge=1, le=512)
+    normal_api_upstream_max_keepalive_connections: int = Field(default=20, ge=1, le=512)
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -64,8 +66,26 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    @field_validator(
+        "normal_api_upstream_max_connections",
+        "normal_api_upstream_max_keepalive_connections",
+        mode="before",
+    )
+    @classmethod
+    def validate_normal_api_pool_limit(cls, value: object) -> object:
+        if value is None or isinstance(value, (bool, float)):
+            raise ValueError("Normal API pool limits must be integers.")
+        return value
+
     @model_validator(mode="after")
     def validate_runtime_configuration(self) -> "Settings":
+        if (
+            self.normal_api_upstream_max_keepalive_connections
+            > self.normal_api_upstream_max_connections
+        ):
+            raise ValueError(
+                "Normal API keepalive connections exceed total connections."
+            )
         if self.environment == "production" and "gateway:gateway" in self.postgres_dsn:
             raise ValueError(
                 "Default development PostgreSQL credentials "

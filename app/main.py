@@ -35,6 +35,7 @@ from app.control_plane.protection import ControlPlaneProtection
 from app.core.config import get_settings
 from app.core.errors import install_error_handlers
 from app.core.request_context import request_context_middleware
+from app.normal_api.http_client import create_normal_api_upstream_client
 from app.redis.circuit import CircuitConfig, RedisCircuitStore
 from app.redis.circuit_cleanup import CircuitAuthorityRepository, CircuitOrphanSweeper
 from app.redis.concurrency import RedisConcurrencySemaphore
@@ -164,9 +165,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             settings.encryption_current_key_version,
         )
 
+    normal_api_upstream_client = create_normal_api_upstream_client(settings)
+    app.state.normal_api_upstream_client = normal_api_upstream_client
     try:
         yield
     finally:
+        await normal_api_upstream_client.aclose()
         await circuit_orphan_sweeper.stop()
         await recovery.stop()
         await config_reconciler.stop()
