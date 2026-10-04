@@ -8,6 +8,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.normal_api.body_limit_constants import (
+    DEFAULT_REQUEST_BODY_LIMIT_BYTES,
+    MAX_REQUEST_BODY_LIMIT_BYTES,
+)
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -123,6 +128,13 @@ class ServiceCreate(StrictModel):
     name: str = Field(min_length=1, max_length=200)
     base_url: str = Field(min_length=1, max_length=2048)
     slug: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,62}$", max_length=63)
+    request_body_limit_bytes: int = Field(
+        default=DEFAULT_REQUEST_BODY_LIMIT_BYTES,
+        strict=True,
+        ge=1,
+        le=MAX_REQUEST_BODY_LIMIT_BYTES,
+        description="Persisted per-service limit; runtime also applies the deployment ceiling.",
+    )
     connect_timeout_seconds: int = Field(default=5, ge=1)
     pool_timeout_seconds: int = Field(default=5, ge=1)
     write_timeout_seconds: int = Field(default=30, ge=1)
@@ -144,6 +156,13 @@ class ServiceCreate(StrictModel):
 class ServicePatch(StrictModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     base_url: str | None = Field(default=None, min_length=1, max_length=2048)
+    request_body_limit_bytes: int = Field(
+        default=None,
+        strict=True,
+        ge=1,
+        le=MAX_REQUEST_BODY_LIMIT_BYTES,
+        description="Replaces the persisted per-service limit; runtime also applies the deployment ceiling.",
+    )
     connect_timeout_seconds: int | None = Field(default=None, ge=1)
     pool_timeout_seconds: int | None = Field(default=None, ge=1)
     write_timeout_seconds: int | None = Field(default=None, ge=1)
@@ -172,6 +191,11 @@ class ServiceResponse(BaseModel):
     name: str
     base_url: str
     slug: str
+    request_body_limit_bytes: int = Field(
+        ge=1,
+        le=MAX_REQUEST_BODY_LIMIT_BYTES,
+        description="Persisted per-service limit; runtime also applies the deployment ceiling.",
+    )
     connect_timeout_seconds: int
     pool_timeout_seconds: int
     write_timeout_seconds: int

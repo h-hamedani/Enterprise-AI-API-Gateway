@@ -2071,6 +2071,7 @@ components:
       - id
       - name
       - base_url
+      - request_body_limit_bytes
       - connect_timeout_seconds
       - pool_timeout_seconds
       - write_timeout_seconds
@@ -2087,6 +2088,11 @@ components:
         base_url:
           type: string
           format: uri
+        request_body_limit_bytes:
+          type: integer
+          minimum: 1
+          maximum: 67108864
+          description: Persisted per-service limit; runtime also applies the deployment ceiling.
         connect_timeout_seconds:
           type: integer
           minimum: 1
@@ -2126,6 +2132,12 @@ components:
         base_url:
           type: string
           format: uri
+        request_body_limit_bytes:
+          type: integer
+          minimum: 1
+          maximum: 67108864
+          default: 10485760
+          description: Persisted per-service limit; runtime also applies the deployment ceiling. Omission stores 10485760; null is invalid.
         connect_timeout_seconds:
           type: integer
           minimum: 1
@@ -2163,6 +2175,11 @@ components:
         base_url:
           type: string
           format: uri
+        request_body_limit_bytes:
+          type: integer
+          minimum: 1
+          maximum: 67108864
+          description: Replaces the persisted per-service limit; runtime also applies the deployment ceiling. Omission preserves the stored value; null is invalid.
         connect_timeout_seconds:
           type: integer
           minimum: 1

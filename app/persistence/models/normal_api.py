@@ -19,6 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.normal_api.body_limit_constants import DEFAULT_REQUEST_BODY_LIMIT_BYTES
 from app.persistence.models.base import (
     Base,
     TimestampMixin,
@@ -56,7 +57,7 @@ class NormalApiService(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     request_body_limit_bytes: Mapped[int] = mapped_column(
         BigInteger,
         nullable=False,
-        default=10 * 1024 * 1024,
+        default=DEFAULT_REQUEST_BODY_LIMIT_BYTES,
     )
 
     connect_timeout_seconds: Mapped[int] = mapped_column(

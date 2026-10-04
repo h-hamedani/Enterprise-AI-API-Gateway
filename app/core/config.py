@@ -6,6 +6,11 @@ from typing import Literal
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.normal_api.body_limit_constants import (
+    DEFAULT_REQUEST_BODY_LIMIT_BYTES,
+    MAX_REQUEST_BODY_LIMIT_BYTES,
+)
+
 
 class Settings(BaseSettings):
     app_name: str = "Enterprise AI & API Gateway"
@@ -58,6 +63,11 @@ class Settings(BaseSettings):
     trusted_proxy_cidrs: tuple[str, ...] = ()
     normal_api_upstream_max_connections: int = Field(default=100, ge=1, le=512)
     normal_api_upstream_max_keepalive_connections: int = Field(default=20, ge=1, le=512)
+    normal_api_request_body_limit_bytes: int = Field(
+        default=DEFAULT_REQUEST_BODY_LIMIT_BYTES,
+        ge=1,
+        le=MAX_REQUEST_BODY_LIMIT_BYTES,
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -75,6 +85,13 @@ class Settings(BaseSettings):
     def validate_normal_api_pool_limit(cls, value: object) -> object:
         if value is None or isinstance(value, (bool, float)):
             raise ValueError("Normal API pool limits must be integers.")
+        return value
+
+    @field_validator("normal_api_request_body_limit_bytes", mode="before")
+    @classmethod
+    def validate_normal_api_body_limit(cls, value: object) -> object:
+        if value is None or isinstance(value, (bool, float)):
+            raise ValueError("Normal API request body limit must be an integer.")
         return value
 
     @model_validator(mode="after")

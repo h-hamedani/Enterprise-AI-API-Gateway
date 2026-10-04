@@ -137,6 +137,119 @@ def test_service_tenant_isolation_defaults_uniqueness_and_pagination(
         _create_service(connection, registry, tenant_a, "orders")
 
 
+def test_service_body_limit_persistence_reads_patch_and_legacy_repair(
+    registry_fixture,
+) -> None:
+    import json
+
+    connection, registry, tenant_a, _, admin_a, _ = registry_fixture
+    table = Base.metadata.tables["normal_api_services"]
+    default_id = _create_service(connection, registry, tenant_a)
+    assert (
+        registry.get_service(
+            connection, tenant_id=tenant_a, service_id=default_id
+        ).request_body_limit_bytes
+        == 10485760
+    )
+    assert (
+        connection.execute(
+            select(table.c.request_body_limit_bytes).where(table.c.id == default_id)
+        ).scalar_one()
+        == 10485760
+    )
+
+    for slug, value in (("minimum", 1), ("maximum", 67108864), ("custom", 25000)):
+        issued = registry.create_service(
+            connection,
+            tenant_id=tenant_a,
+            admin_user_id=admin_a,
+            request=ServiceCreate(
+                name=slug,
+                base_url=f"https://{slug}.example",
+                slug=slug,
+                request_body_limit_bytes=value,
+            ),
+            raw_idempotency_key=None,
+        )
+        payload = json.loads(issued.response.body)
+        assert payload["request_body_limit_bytes"] == value
+        service_id = UUID(payload["id"])
+        assert (
+            registry.get_service(
+                connection, tenant_id=tenant_a, service_id=service_id
+            ).request_body_limit_bytes
+            == value
+        )
+
+    page = registry.list_services(connection, tenant_id=tenant_a, limit=50, cursor=None)
+    assert {row.request_body_limit_bytes for row in page.data} == {
+        1,
+        25000,
+        10485760,
+        67108864,
+    }
+    unchanged = registry.patch_service(
+        connection,
+        tenant_id=tenant_a,
+        service_id=default_id,
+        patch=ServicePatch(name="renamed"),
+    )
+    assert unchanged.request_body_limit_bytes == 10485760
+    replaced = registry.patch_service(
+        connection,
+        tenant_id=tenant_a,
+        service_id=default_id,
+        patch=ServicePatch(request_body_limit_bytes=67108864),
+    )
+    assert replaced.request_body_limit_bytes == 67108864
+    assert (
+        connection.execute(
+            select(table.c.request_body_limit_bytes).where(table.c.id == default_id)
+        ).scalar_one()
+        == 67108864
+    )
+
+    for invalid in (None, 0, 67108865):
+        with pytest.raises(ValidationError):
+            ServicePatch(request_body_limit_bytes=invalid)
+        assert (
+            connection.execute(
+                select(table.c.request_body_limit_bytes).where(table.c.id == default_id)
+            ).scalar_one()
+            == 67108864
+        )
+
+    connection.execute(
+        update(table)
+        .where(table.c.id == default_id)
+        .values(request_body_limit_bytes=67108865)
+    )
+    with pytest.raises(ValidationError):
+        registry.get_service(connection, tenant_id=tenant_a, service_id=default_id)
+    with pytest.raises(ValidationError):
+        registry.list_services(connection, tenant_id=tenant_a, limit=50, cursor=None)
+    with pytest.raises(ValidationError), connection.begin_nested():
+        registry.patch_service(
+            connection,
+            tenant_id=tenant_a,
+            service_id=default_id,
+            patch=ServicePatch(name="must-not-stick"),
+        )
+    assert (
+        connection.execute(
+            select(table.c.display_name).where(table.c.id == default_id)
+        ).scalar_one()
+        == "renamed"
+    )
+    repaired = registry.patch_service(
+        connection,
+        tenant_id=tenant_a,
+        service_id=default_id,
+        patch=ServicePatch(request_body_limit_bytes=100),
+    )
+    assert repaired.request_body_limit_bytes == 100
+
+
 def test_method_specific_route_identity_relationship_and_patch(
     registry_fixture,
 ) -> None:
