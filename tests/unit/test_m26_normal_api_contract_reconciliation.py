@@ -139,6 +139,56 @@ def test_generated_openapi_route_policy_matches_static_contract() -> None:
     assert "header_policy" in static["Route"]["allOf"][1]["required"]
 
 
+def test_generated_openapi_route_timeout_matches_static_contract() -> None:
+    generated = create_app().openapi()["components"]["schemas"]
+    static = _document()["components"]["schemas"]
+
+    for static_name, generated_name in (
+        ("RouteCreate", "RouteCreate"),
+        ("RoutePatch", "RoutePatch"),
+        ("Route", "RouteResponse"),
+    ):
+        static_usage = (
+            static["RouteCreate"] if static_name == "Route" else static[static_name]
+        )["properties"]["timeout_ms"]
+        generated_usage = generated[generated_name]["properties"]["timeout_ms"]
+        assert static_usage["type"] == ["integer", "null"]
+        assert static_usage["minimum"] == 1
+        assert {item["type"] for item in generated_usage["anyOf"]} == {
+            "integer",
+            "null",
+        }
+        assert (
+            next(
+                item for item in generated_usage["anyOf"] if item["type"] == "integer"
+            )["minimum"]
+            == 1
+        )
+        for description in (
+            static_usage["description"],
+            generated_usage["description"],
+        ):
+            for term in (
+                "Milliseconds",
+                "replaces only",
+                "pre-response-start",
+                "connect, pool, write, and read-idle",
+                "Null inherits service.pre_response_timeout_seconds",
+                "Not a total request deadline",
+            ):
+                assert term in description
+        if static_name != "Route":
+            assert "timeout_ms" not in static[static_name].get("required", [])
+            assert "timeout_ms" not in generated[generated_name].get("required", [])
+        else:
+            assert "timeout_ms" in static["Route"]["allOf"][1]["required"]
+            assert "timeout_ms" in generated["RouteResponse"]["required"]
+
+    assert "default" not in static["RouteCreate"]["properties"]["timeout_ms"]
+    assert "default" not in generated["RouteCreate"]["properties"]["timeout_ms"]
+    assert "default" not in static["RoutePatch"]["properties"]["timeout_ms"]
+
+
 def test_normal_api_endpoint_paths_are_unchanged() -> None:
     paths = _document()["paths"]
     assert {

@@ -2295,6 +2295,11 @@ components:
           - integer
           - 'null'
           minimum: 1
+          description: >-
+            Milliseconds. A non-null value replaces only the service
+            pre-response-start deadline; connect, pool, write, and read-idle
+            timeouts remain service-owned. Null inherits
+            service.pre_response_timeout_seconds. Not a total request deadline.
         status:
           type: string
           enum:
@@ -2344,6 +2349,11 @@ components:
           - integer
           - 'null'
           minimum: 1
+          description: >-
+            Milliseconds. A non-null value replaces only the service
+            pre-response-start deadline; connect, pool, write, and read-idle
+            timeouts remain service-owned. Null inherits
+            service.pre_response_timeout_seconds. Not a total request deadline.
         status:
           type: string
           enum:
@@ -2356,6 +2366,7 @@ components:
         required:
         - id
         - header_policy
+        - timeout_ms
         properties:
           id:
             type: string

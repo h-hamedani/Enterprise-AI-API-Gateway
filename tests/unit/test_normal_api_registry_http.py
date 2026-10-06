@@ -81,6 +81,30 @@ def test_route_schema_is_scalar_and_structural() -> None:
     assert RoutePatch(method="POST").method == "POST"
 
 
+def test_route_timeout_create_and_patch_null_semantics() -> None:
+    base = {
+        "service_id": "00000000-0000-0000-0000-000000000001",
+        "path_pattern": "/orders",
+        "method": "GET",
+        "upstream_path_template": "/orders",
+        "priority": 0,
+    }
+    assert RouteCreate(**base).timeout_ms is None
+    assert RouteCreate(**base, timeout_ms=None).timeout_ms is None
+    assert RouteCreate(**base, timeout_ms=9000).timeout_ms == 9000
+    assert "timeout_ms" not in RoutePatch(priority=1).model_dump(exclude_unset=True)
+    assert RoutePatch(timeout_ms=12000).model_dump(exclude_unset=True) == {
+        "timeout_ms": 12000
+    }
+    assert RoutePatch(timeout_ms=None).model_dump(exclude_unset=True) == {
+        "timeout_ms": None
+    }
+    with pytest.raises(ValidationError):
+        RouteCreate(**base, timeout_ms=0)
+    with pytest.raises(ValidationError):
+        RoutePatch(timeout_ms=0)
+
+
 def test_route_header_policy_canonical_and_null_semantics() -> None:
     base = {
         "service_id": "00000000-0000-0000-0000-000000000001",

@@ -268,7 +268,16 @@ class RouteCreate(StrictModel):
     upstream_path_template: str = Field(min_length=1, max_length=1024)
     header_policy: RouteHeaderPolicy | None = None
     priority: int = Field(ge=0)
-    timeout_ms: int | None = Field(default=None, ge=1)
+    timeout_ms: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Milliseconds. A non-null value replaces only the service "
+            "pre-response-start deadline; connect, pool, write, and read-idle "
+            "timeouts remain service-owned. Null inherits "
+            "service.pre_response_timeout_seconds. Not a total request deadline."
+        ),
+    )
     status: ServiceStatus = "ACTIVE"
 
 
@@ -282,7 +291,16 @@ class RoutePatch(StrictModel):
     )
     header_policy: RouteHeaderPolicy | None = None
     priority: int | None = Field(default=None, ge=0)
-    timeout_ms: int | None = Field(default=None, ge=1)
+    timeout_ms: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Milliseconds. A non-null value replaces only the service "
+            "pre-response-start deadline; connect, pool, write, and read-idle "
+            "timeouts remain service-owned. Null inherits "
+            "service.pre_response_timeout_seconds. Not a total request deadline."
+        ),
+    )
     status: ServiceStatus | None = None
 
     @model_validator(mode="after")
@@ -303,7 +321,15 @@ class RouteResponse(BaseModel):
     upstream_path_template: str
     header_policy: RouteHeaderPolicy | None
     priority: int
-    timeout_ms: int | None
+    timeout_ms: int | None = Field(
+        ge=1,
+        description=(
+            "Milliseconds. A non-null value replaces only the service "
+            "pre-response-start deadline; connect, pool, write, and read-idle "
+            "timeouts remain service-owned. Null inherits "
+            "service.pre_response_timeout_seconds. Not a total request deadline."
+        ),
+    )
     status: ServiceStatus
 
 

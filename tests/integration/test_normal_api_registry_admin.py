@@ -296,6 +296,78 @@ def test_method_specific_route_identity_relationship_and_patch(
         )
 
 
+def test_route_timeout_override_create_patch_and_readback(registry_fixture) -> None:
+    connection, registry, tenant_id, _, _, _ = registry_fixture
+    service_id = _create_service(connection, registry, tenant_id)
+    base = {
+        "service_id": service_id,
+        "path_pattern": "/timeout",
+        "method": "GET",
+        "upstream_path_template": "/timeout",
+        "priority": 0,
+    }
+
+    inherited = registry.create_route(
+        connection, tenant_id=tenant_id, request=RouteCreate(**base)
+    )
+    assert inherited.timeout_ms is None
+    assert (
+        registry.get_route(
+            connection, tenant_id=tenant_id, route_id=inherited.id
+        ).timeout_ms
+        is None
+    )
+
+    overridden = registry.create_route(
+        connection,
+        tenant_id=tenant_id,
+        request=RouteCreate(
+            **{**base, "path_pattern": "/explicit", "timeout_ms": 9000}
+        ),
+    )
+    assert overridden.timeout_ms == 9000
+    assert (
+        registry.patch_route(
+            connection,
+            tenant_id=tenant_id,
+            route_id=overridden.id,
+            patch=RoutePatch(priority=1),
+        ).timeout_ms
+        == 9000
+    )
+    assert (
+        registry.patch_route(
+            connection,
+            tenant_id=tenant_id,
+            route_id=overridden.id,
+            patch=RoutePatch(timeout_ms=12000),
+        ).timeout_ms
+        == 12000
+    )
+    assert (
+        registry.get_route(
+            connection, tenant_id=tenant_id, route_id=overridden.id
+        ).timeout_ms
+        == 12000
+    )
+    assert (
+        registry.patch_route(
+            connection,
+            tenant_id=tenant_id,
+            route_id=overridden.id,
+            patch=RoutePatch(timeout_ms=None),
+        ).timeout_ms
+        is None
+    )
+    listed = registry.list_routes(
+        connection, tenant_id=tenant_id, limit=50, cursor=None
+    )
+    assert {route.id: route.timeout_ms for route in listed.data} == {
+        inherited.id: None,
+        overridden.id: None,
+    }
+
+
 def test_route_policy_legacy_read_fails_closed_and_explicit_patch_repairs(
     registry_fixture,
 ) -> None:
