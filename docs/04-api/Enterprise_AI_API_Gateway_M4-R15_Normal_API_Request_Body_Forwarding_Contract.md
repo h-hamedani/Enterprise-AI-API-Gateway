@@ -1,4 +1,4 @@
-﻿# M4-R15 â€” Normal API Request Body Forwarding Contract
+# M4-R15 â€” Normal API Request Body Forwarding Contract
 
 Status: **FROZEN M4 V1 CONTRACT â€” DOCUMENTATION ONLY.** This contract resolves body completion, forwarding, and local receive failures without implementing a proxy.
 
@@ -41,4 +41,3 @@ Later tests must prove: (1) zero-length final body; (2) `Content-Length: 0`; (3)
 ## 6. Narrow supersession
 
 M4-R15 fills only M4-R6's deferred request-body forwarding and incomplete-body semantics. It does not move the M4-R7A circuit gate, change M4-R3 header policy, alter M4-R8/R9 ownership/cancellation, shift M4-R10 timeout clocks, introduce upstream streaming or body transforms, or choose a spool implementation.
-
