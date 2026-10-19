@@ -7,6 +7,7 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from inspect import isawaitable
+from typing import TypeVar
 from uuid import UUID
 
 from redis.asyncio import Redis
@@ -22,6 +23,8 @@ from app.redis.telemetry import (
 )
 
 logger = logging.getLogger(__name__)
+Captured = TypeVar("Captured")
+ConsumerKey = tuple[UUID, str, UUID] | tuple[UUID, str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,9 +74,16 @@ class InvalidationRegistry:
         self._tenant_callbacks: dict[UUID, Callable[[int], Awaitable[None] | None]] = {}
         self._pending_initialization: set[UUID] = set()
         self._required_current_state: dict[
-            tuple[UUID, str, UUID], Callable[[UUID], Awaitable[None] | None]
+            ConsumerKey, Callable[[UUID], Awaitable[None] | None]
         ] = {}
-        self._pending_required: set[tuple[UUID, str, UUID]] = set()
+        self._pending_required: set[ConsumerKey] = set()
+        self._wide_callbacks: dict[
+            tuple[UUID, str],
+            tuple[
+                frozenset[str], Callable[[InvalidationEvent], Awaitable[None] | None]
+            ],
+        ] = {}
+        self._publications: dict[ConsumerKey, Callable[[], None]] = {}
         self._reconciliation_required: set[UUID] = set()
         self._certified_tenants: set[UUID] = set()
         self._invalidation_epoch = 0
@@ -134,6 +144,40 @@ class InvalidationRegistry:
     def reconciliation_required(self, tenant_id: UUID) -> bool:
         return tenant_id in self._reconciliation_required
 
+    async def ensure_tenant_consumer(
+        self,
+        tenant_id: UUID,
+        name: str,
+        resource_types: frozenset[str],
+        event_callback: Callable[[InvalidationEvent], Awaitable[None] | None],
+        reconcile_current_state: Callable[[UUID], Awaitable[None] | None],
+        publish: Callable[[], None],
+    ) -> None:
+        """One named required consumer; no synthetic resource identity."""
+        async with self._locks[tenant_id]:
+            key = (tenant_id, name)
+            if key in self._required_current_state:
+                if self._required_current_state[key] != reconcile_current_state:
+                    raise ValueError("Named required consumer already has an owner.")
+                return
+            self._tenants.add(tenant_id)
+            self._wide_callbacks[key] = (resource_types, event_callback)
+            self._required_current_state[key] = reconcile_current_state
+            self._publications[key] = publish
+            self._pending_required.add(key)
+            self._invalidate_certificate(tenant_id)
+
+    async def capture_required(
+        self, tenant_id: UUID, name: str, capture: Callable[[int], Captured]
+    ) -> Captured | None:
+        """Atomically validate completeness and capture immutable consumer state."""
+        async with self._locks[tenant_id]:
+            if (tenant_id, name) not in self._required_current_state:
+                return None
+            if not self.is_tenant_reconciled(tenant_id):
+                return None
+            return capture(self._versions[tenant_id])
+
     def required_initialization_pending(self, tenant_id: UUID) -> bool:
         return any(key[0] == tenant_id for key in self._pending_required)
 
@@ -179,6 +223,21 @@ class InvalidationRegistry:
                         event.resource_id,
                     ) in self._required_current_state:
                         self._reconciliation_required.add(event.tenant_id)
+                    raise
+            # Other tenants may register while an async callback is suspended.
+            # Preserve this dispatch's insertion-ordered, tenant-local membership.
+            wide_snapshot = tuple(
+                wide_callback
+                for key, (resource_types, wide_callback) in self._wide_callbacks.items()
+                if key[0] == event.tenant_id and event.resource_type in resource_types
+            )
+            for wide_callback in wide_snapshot:
+                try:
+                    result = wide_callback(event)
+                    if isawaitable(result):
+                        await result
+                except (Exception, asyncio.CancelledError):
+                    self._reconciliation_required.add(event.tenant_id)
                     raise
             self._versions[event.tenant_id] = event.version
         return "APPLIED"
@@ -320,6 +379,16 @@ class InvalidationRegistry:
             ):
                 self._reconciliation_required.add(tenant_id)
                 return "fence_mismatch"
+
+            if work_needed:
+                try:
+                    for key, _ in required_snapshot:
+                        publish = self._publications.get(key)
+                        if publish is not None:
+                            publish()
+                except (Exception, asyncio.CancelledError):
+                    self._reconciliation_required.add(tenant_id)
+                    raise
 
             self._versions[tenant_id] = (
                 end_version if previous is None else max(previous, end_version)

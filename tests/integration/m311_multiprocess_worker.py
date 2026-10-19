@@ -145,6 +145,18 @@ class Worker:
         command = data["cmd"]
         coordinator = app.state.recovery_coordinator
         registry = app.state.invalidation_registry
+        if command == "normal_register":
+            await app.state.normal_api_current_state.register(UUID(data["tenant"]))
+            return {"registered": True}
+        if command == "normal_capture":
+            snapshot = await app.state.normal_api_current_state.capture(
+                UUID(data["tenant"])
+            )
+            return {
+                "version": snapshot.observed_version,
+                "services": [row["slug"] for row in snapshot.projection.services],
+                "paths": [row["path_pattern"] for row in snapshot.projection.routes],
+            }
         if command == "health":
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url="http://test"

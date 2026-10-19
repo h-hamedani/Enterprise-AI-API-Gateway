@@ -35,6 +35,7 @@ from app.control_plane.protection import ControlPlaneProtection
 from app.core.config import get_settings
 from app.core.errors import install_error_handlers
 from app.core.request_context import request_context_middleware
+from app.normal_api.current_state import CurrentStateRepository, NormalApiCurrentState
 from app.normal_api.http_client import create_normal_api_upstream_client
 from app.redis.circuit import CircuitConfig, RedisCircuitStore
 from app.redis.circuit_cleanup import CircuitAuthorityRepository, CircuitOrphanSweeper
@@ -89,6 +90,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.invalidation_registry = invalidation_registry
     app.state.invalidation_subscriber = invalidation_subscriber
     app.state.config_reconciler = config_reconciler
+    normal_api_current_state = NormalApiCurrentState(
+        invalidation_registry, CurrentStateRepository(db_engine).load
+    )
+    app.state.normal_api_current_state = normal_api_current_state
     recovery = RecoveryCoordinator(
         redis_runtime,
         invalidation_subscriber,
@@ -174,6 +179,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await circuit_orphan_sweeper.stop()
         await recovery.stop()
         await config_reconciler.stop()
+        await normal_api_current_state.close()
         await invalidation_subscriber.stop()
         await redis_runtime.close()
         await db_engine.dispose()
