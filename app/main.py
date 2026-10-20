@@ -35,8 +35,11 @@ from app.control_plane.protection import ControlPlaneProtection
 from app.core.config import get_settings
 from app.core.errors import install_error_handlers
 from app.core.request_context import request_context_middleware
+from app.core.security.credentials import CredentialHasher
+from app.normal_api.auth import GatewayAuthenticator
 from app.normal_api.current_state import CurrentStateRepository, NormalApiCurrentState
 from app.normal_api.http_client import create_normal_api_upstream_client
+from app.normal_api.resolution import NormalApiResolver
 from app.redis.circuit import CircuitConfig, RedisCircuitStore
 from app.redis.circuit_cleanup import CircuitAuthorityRepository, CircuitOrphanSweeper
 from app.redis.concurrency import RedisConcurrencySemaphore
@@ -94,6 +97,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         invalidation_registry, CurrentStateRepository(db_engine).load
     )
     app.state.normal_api_current_state = normal_api_current_state
+    if settings.credential_hmac_secret is not None:
+        app.state.normal_api_resolver = NormalApiResolver(
+            GatewayAuthenticator(
+                db_engine,
+                CredentialHasher(base64.b64decode(settings.credential_hmac_secret)),
+            ),
+            normal_api_current_state,
+            deployment_body_limit_bytes=settings.normal_api_request_body_limit_bytes,
+        )
     recovery = RecoveryCoordinator(
         redis_runtime,
         invalidation_subscriber,
