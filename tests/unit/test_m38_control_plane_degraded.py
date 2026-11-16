@@ -37,8 +37,8 @@ class Client:
         self.pings += 1
         return True
 
-    async def aclose(self):
-        return None
+    async def aclose(self, *, close_connection_pool=True):
+        assert close_connection_pool is True
 
 
 class Runtime:

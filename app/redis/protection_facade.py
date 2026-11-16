@@ -183,6 +183,32 @@ class RecoveryConcurrencySemaphore:
             )
         return result
 
+    async def renew_guarded(self, policies, handle: object, *, guard):
+        from app.redis.guarded_renewal import RenewalDisposition, not_owned
+
+        if not self._valid(handle):
+            return not_owned()
+        if handle.backend is Backend.REDIS:
+            outcome = await self._normal.renew_guarded(
+                policies, handle.raw_lease_id, guard=guard
+            )
+            if outcome.disposition is RenewalDisposition.UNKNOWN:
+                self._coordinator.mark_unreachable()
+            return outcome
+        local = self._coordinator.local_generation(handle.local_generation_id)
+        if local is None:
+            return not_owned()
+        outcome = await local.concurrency.renew_guarded(
+            policies, handle.raw_lease_id, guard=guard
+        )
+        if outcome.result is not None and outcome.result.renewed:
+            self._coordinator.note_local_completion(
+                handle.local_generation_id,
+                self._coordinator.clock() + self._coordinator.lease_duration_seconds,
+                handle.raw_lease_id,
+            )
+        return outcome
+
     async def release(self, policies, handle: object) -> ReleaseResult:
         if not self._valid(handle):
             return ReleaseResult(False)

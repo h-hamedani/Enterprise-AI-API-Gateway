@@ -179,6 +179,15 @@ class RedisConcurrencySemaphore:
             return ReleaseResult(False)
         return ReleaseResult(bool(await self._execute("release", ordered, lease_id)))
 
+    async def renew_guarded(self, policies, lease_id: UUID, *, guard):
+        from app.redis.guarded_renewal import not_owned, renew_redis_guarded
+
+        ordered = self._ordered(policies)
+        self._check_lease_id(lease_id)
+        if not ordered:
+            return not_owned()
+        return await renew_redis_guarded(self, ordered, lease_id, guard)
+
     async def _execute(
         self,
         action: str,
@@ -214,12 +223,13 @@ class RedisConcurrencySemaphore:
         self._record(action, outcomes[action][result], ordered)
         return result
 
-    async def _load(self, action: str, *, force: bool = False) -> str:
+    async def _load(self, action: str, *, force: bool = False, transport=None) -> str:
         async with self._script_lock:
+            if transport is not None:
+                transport.require_open()
             if force or action not in self._sha:
-                self._sha[action] = await self._runtime.client.script_load(
-                    _SCRIPTS[action]
-                )
+                loader = self._runtime.client if transport is None else transport
+                self._sha[action] = await loader.script_load(_SCRIPTS[action])
             return self._sha[action]
 
     @staticmethod

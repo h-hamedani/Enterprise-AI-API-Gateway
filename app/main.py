@@ -40,6 +40,7 @@ from app.normal_api.auth import GatewayAuthenticator
 from app.normal_api.current_state import CurrentStateRepository, NormalApiCurrentState
 from app.normal_api.http_client import create_normal_api_upstream_client
 from app.normal_api.resolution import NormalApiResolver
+from app.normal_api.supervisor import LifecycleScope, LifecycleSupervisor
 from app.redis.circuit import CircuitConfig, RedisCircuitStore
 from app.redis.circuit_cleanup import CircuitAuthorityRepository, CircuitOrphanSweeper
 from app.redis.concurrency import RedisConcurrencySemaphore
@@ -60,6 +61,10 @@ if sys.platform == "win32":
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
+    supervisor = getattr(app.state, "lifecycle_supervisor", None)
+    if supervisor is None and settings.lifecycle_grace_timeout_seconds is not None:
+        supervisor = LifecycleSupervisor(settings.lifecycle_grace_timeout_seconds)
+        app.state.lifecycle_supervisor = supervisor
 
     db_engine: AsyncEngine = create_async_engine(
         settings.postgres_dsn,
@@ -187,14 +192,33 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        await normal_api_upstream_client.aclose()
-        await circuit_orphan_sweeper.stop()
-        await recovery.stop()
-        await config_reconciler.stop()
-        await normal_api_current_state.close()
-        await invalidation_subscriber.stop()
-        await redis_runtime.close()
-        await db_engine.dispose()
+        redis_cleanup_scope = (
+            LifecycleScope(supervisor) if supervisor is not None else None
+        )
+
+        async def close_redis():
+            if redis_cleanup_scope is None:
+                await redis_runtime.close()
+            else:
+                await redis_runtime.close(cleanup_scope=redis_cleanup_scope)
+
+        resources = (
+            ("http", normal_api_upstream_client.aclose),
+            ("sweeper", circuit_orphan_sweeper.stop),
+            ("recovery", recovery.stop),
+            ("reconciler", config_reconciler.stop),
+            ("current_state", normal_api_current_state.close),
+            ("subscriber", invalidation_subscriber.stop),
+            ("redis", close_redis),
+            ("postgres", db_engine.dispose),
+        )
+        if supervisor is not None:
+            supervisor.begin_shutdown()
+            await supervisor.drain()
+            await supervisor.close_resources(resources)
+        else:
+            for _, close in resources:
+                await close()
 
 
 def create_app() -> FastAPI:

@@ -1,5 +1,6 @@
 import base64
 import binascii
+import math
 from functools import lru_cache
 from typing import Literal
 
@@ -41,6 +42,9 @@ class Settings(BaseSettings):
     break_glass_secret_hash: str | None = None
 
     redis_url: str = "redis://localhost:6379/0"
+    lifecycle_grace_timeout_seconds: float | None = Field(
+        default=None, validate_default=False
+    )
 
     dependency_timeout_seconds: float = Field(
         default=1.0,
@@ -75,6 +79,20 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    @field_validator("lifecycle_grace_timeout_seconds", mode="before")
+    @classmethod
+    def validate_lifecycle_grace(cls, value):
+        # Omission permits legacy non-managed startup; explicit invalid input does not.
+        if value is None or isinstance(value, bool):
+            raise ValueError("An explicit finite positive lifecycle grace is required.")
+        try:
+            parsed = float(value)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("Invalid lifecycle grace.") from exc
+        if not math.isfinite(parsed) or parsed <= 0:
+            raise ValueError("Invalid lifecycle grace.")
+        return parsed
 
     @field_validator(
         "normal_api_upstream_max_connections",

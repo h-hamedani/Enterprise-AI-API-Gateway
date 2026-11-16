@@ -306,6 +306,49 @@ class LocalConcurrencyStore:
                 scope.touched_ms = now
             return RenewResult(True)
 
+    async def renew_guarded(self, policies, lease_id: UUID, *, guard):
+        from app.redis.guarded_renewal import (
+            GuardedRenewalOperation,
+            RenewalAttemptStatus,
+            RenewalDisposition,
+            not_owned,
+        )
+
+        ordered = RedisConcurrencySemaphore._ordered(policies)
+        if not isinstance(lease_id, UUID):
+            raise ConcurrencyPolicyError("Lease ID must be a UUID.")
+        if not ordered:
+            return not_owned()
+        operation = GuardedRenewalOperation("LOCAL")
+        try:
+            async with self._lock:
+                stamp = operation.authorize(guard)
+                if stamp is None:
+                    return operation.finish(RenewalDisposition.SUPPRESSED)
+                now = int(self._clock() * 1000)
+                operation.begin(stamp)
+                self._clean(now)
+                scopes = [
+                    self._entries.get((p.tenant_id, p.scope_type, p.scope_id))
+                    for p in ordered
+                ]
+                complete = all(
+                    scope is not None and lease_id in scope.owners for scope in scopes
+                )
+                if complete:
+                    for scope in scopes:
+                        scope.owners[lease_id] = now + self._duration
+                        scope.touched_ms = now
+                operation.resolve(
+                    RenewalAttemptStatus.RESULT, result=RenewResult(complete)
+                )
+                return operation.finish(RenewalDisposition.BACKEND_RESULT)
+        except asyncio.CancelledError:
+            operation.cancelled = True
+            raise
+        except Exception as exc:  # noqa: BLE001 -- R2 returns sanitized fault evidence
+            return operation.failed(exc)
+
 
 @dataclass(slots=True)
 class _Circuit:
