@@ -1,6 +1,6 @@
 # M4-P1C-R2 — Guarded Renewal Dispatch Boundary Contract
 
-Status: **DRAFT — NOT FROZEN — INDEPENDENT REVIEW REQUIRED**
+Status: **FROZEN — OWNER APPROVED — BOUNDED F4B IMPLEMENTATION AUTHORIZED AFTER THE FREEZE COMMIT**
 
 Baseline: `feature/m3-runtime`, `36355d52b5c9118b181100caf850f0e4526e2a76`.
 
@@ -19,7 +19,7 @@ The following authorities retain their existing responsibilities.
 | [M4-R9](Enterprise_AI_API_Gateway_M4-R9_Normal_API_Cancellation_and_In_Flight_Abort_Contract.md) | First terminal decision, cancellation, circuit classification and cleanup ordering |
 | [M4-P1C-R1](Enterprise_AI_API_Gateway_M4-P1C-R1_Server_Shutdown_Request_Cancellation_Deadline_Contract.md) | Shared lifecycle duration, earliest absolute cutoff, irreversible expiry and residual obligations |
 
-This draft qualifies the dispatch boundary of the additive guarded renewal path. It MUST preserve existing `renew(...) -> RenewResult` behavior and exceptions for legacy consumers. It changes no acquisition, ordinary release, circuit completion, rate limiting or unrelated Redis command path. Drafting this document authorizes no implementation.
+This contract qualifies the dispatch boundary of the additive guarded renewal path. It MUST preserve existing `renew(...) -> RenewResult` behavior and exceptions for legacy consumers. It changes no acquisition, ordinary release, circuit completion, rate limiting or unrelated Redis command path. Implementation authority is limited by the owner decision and section 12.
 
 ## 2. Ownership and eligibility
 
@@ -27,7 +27,9 @@ M4 MUST own the live terminal lifecycle state, effective request/process cleanup
 
 The caller MUST supply a synchronous guard and its process-local monotonic clock. The same clock domain MUST be used for the R8 anchor, confidence horizon and R1 effective cutoff. A decision MUST read live eligibility at invocation. A captured earlier boolean or queued-task timestamp is insufficient.
 
-Permission requires all applicable conditions to hold simultaneously. The request has no terminal decision, renewal remains enabled, R1 expiry has not latched, and the sampled time is strictly earlier than both the existing R8 horizon and every established applicable cutoff. Equality MUST deny. Process shutdown initiation alone MUST retain R1's existing allowance for active requests before their effective cutoff. Shutdown cancellation, latched expiry and an expired cutoff MUST deny.
+Permission requires all applicable conditions to hold simultaneously. Request execution has not terminalized, renewal remains enabled, R1 expiry has not latched, and the sampled time is strictly earlier than both the existing R8 horizon and every established applicable cutoff. Equality MUST deny. Process shutdown initiation alone MUST retain R1's existing allowance for active requests before their effective cutoff. Shutdown cancellation, latched expiry and an expired cutoff MUST deny.
+
+For renewal eligibility, terminalization means terminal request execution/cancellation or entry into terminal cleanup. Recording a definitive upstream outcome does not by itself disable renewal while downstream delivery remains active. That outcome retains its existing R9 circuit-classification precedence. A later local cancellation may stop delivery without rewriting the recorded upstream outcome. Ordinary successful delivery activates cleanup only when delivery ends, under R1; it does not grant further renewal after terminalization.
 
 The guard MUST perform only bounded synchronous eligibility checks, with no external I/O, await, task creation or lifecycle mutation. It MUST return exactly a Python `bool`. Awaitables, truthy objects and numeric substitutes MUST be rejected. Invalid/non-finite clock samples, clock faults and ordinary guard exceptions MUST fail closed as internal faults. `asyncio.CancelledError` MUST propagate under the cancellation rules in section 5. Diagnostics MUST use fixed safe categories and exclude raw exception contents.
 
@@ -101,6 +103,8 @@ History preservation applies to every disposition, propagated exception and canc
 
 `SUPPRESSED` MUST NOT manufacture `renewed=False`, prove ownership loss or advance an anchor. `UNKNOWN` MUST retain R8's bounded dependency handling. Guard and internal faults MUST terminalize through the existing safe internal-fault path, without being reclassified as authoritative backend false or Redis availability failures. Definitive backend false and `NOT_OWNED` retain R9's loss semantics.
 
+On `SUPPRESSED`, the M4 owner MUST re-evaluate its existing live terminal, renewal-enabled, confidence-horizon and lifecycle-cutoff state. It MUST preserve an already selected terminal decision and enforce any reached existing boundary without fabricating backend loss. Suppression MUST NOT authorize an additional retry, a new anchor or continued execution beyond an existing boundary. If suppression cannot be explained by the owner's eligibility state, it MUST follow the existing internal contract-fault path. This owner-side handling does not change the backend disposition or convert intentional terminal cleanup into a second fault.
+
 Operation disposition and attempt certainty are independent. `UNKNOWN` identifies the applicable M3-R7/R8 dependency path; an `UNRESOLVED` attempt identifies uncertain execution. Thus reload failure after confirmed NOSCRIPT may be `UNKNOWN` with no unresolved mutation, and a definitive availability error reply may be `UNKNOWN` with `RESOLVED_ERROR` evidence. A guard/internal fault can retain older uncertainty without becoming an availability failure. Non-dependency authentication, ACL, command and configuration faults MUST remain internal/non-dependency failures. The guarded facade MUST preserve existing Redis-unreachable notification for a classified Redis dependency failure, with no local renewal substitution.
 
 The following validation matrix is normative. `N`, `R`, `E` and `U` abbreviate attempt statuses `NOSCRIPT`, `RESULT`, `RESOLVED_ERROR` and `UNRESOLVED`. Bracketed sequences describe this invocation. A prefixed `N` is allowed only through the existing single NOSCRIPT recovery. Every nonempty entry retains its own timestamp. Earlier-invocation uncertainty is retained separately under bounded request/R1 accounting and MUST survive every row until actually resolved. Only `BACKEND_RESULT` has a producing `dispatched_at`; all other dispositions have that field absent, with timestamps available in their attempt evidence.
@@ -126,6 +130,8 @@ For every normal outcome, `result` and `dispatched_at` MUST obey the field table
 
 An earlier uncertain send MUST remain uncertain if a later guarded invocation is suppressed. M4 MUST retain unresolved attempt evidence until existing ownership/cleanup accounting resolves it. A later denial proves only that the denied attempt sent nothing. It MUST NOT erase uncertainty from another attempt or manufacture a completed renewal. Per-invocation evidence is bounded as defined above. Request accounting MUST use bounded summaries and R1-owned live obligations rather than accumulate an unbounded history of completed operations. No automatic retransmission after an uncertain write is authorized by this interface.
 
+M4 MUST retain operation evidence independently of whether an invocation returns a normal outcome. Cancellation, a later suppressed invocation, a later successful renewal, task completion or runner return MUST NOT alone resolve an earlier uncertain attempt. Completed histories MAY be compacted into bounded truthful summaries; unresolved obligations MUST remain strongly owned under R1, including transfer to the supervisor before request ownership is relinquished. Compaction MUST NOT fabricate backend execution truth or authorize a new operation. Immutable published snapshots MUST remain unchanged; a definitive reply may resolve its own live operation record and produce a new snapshot under section 4. Backend execution uncertainty and physical socket-closure confirmation are separate obligations; evidence for one MUST NOT be substituted for the other.
+
 Cancellation MUST propagate according to existing task ownership. It MUST NOT be converted to a normal false result, Redis UNKNOWN or guard/internal-error outcome, or swallowed as success. Cancellation before dispatch establishes no new uncertain send. After dispatch, its operation record MUST preserve available attempt timestamps, uncertainty and already observed replies/results. The record MUST distinguish preparation, drain and response-wait cancellation. A retained cancelled/unresolved operation remains part of R1 cleanup accounting even when no normal outcome is returned. The existing R9 first-winner terminal decision MUST remain authoritative. A later guard fault or cancellation MUST NOT overwrite an already recorded terminal decision or rewrite an already published valid anchor. An unexpected worker cancellation while still active retains R8's existing internal-fault handling at the request owner, without reclassifying the cancelled operation as a Redis failure.
 
 ## 6. Timing and timestamp provenance
@@ -134,7 +140,7 @@ R8's normal scheduling at `anchor + T/3`, one UNKNOWN retry at `anchor + T/2` an
 
 Only an authoritative `renewed=True` confirmed before the previously applicable confidence horizon, while the request remains eligible, MAY establish a new anchor. That anchor MUST be the dispatch timestamp of the attempt producing the successful result. Task creation, script-load entry, initial NOSCRIPT dispatch and response arrival MUST NOT substitute for that timestamp. A timely send with a late confirmation MUST NOT extend confidence or revive terminal execution. False results, suppression, UNKNOWN and faults never advance the anchor.
 
-Only one renewal operation for a handle may be in flight. NOSCRIPT recovery remains inside that operation. R8's bounded business-level UNKNOWN retry remains separate and may begin only after the preceding operation has returned and live eligibility still permits it. This draft creates no extra business-level retry.
+Only one renewal operation for a handle may be in flight. NOSCRIPT recovery remains inside that operation. R8's bounded business-level UNKNOWN retry remains separate and may begin only after the preceding operation has returned and live eligibility still permits it. This contract creates no extra business-level retry.
 
 ## 7. Redis adapter and NOSCRIPT
 
@@ -164,6 +170,10 @@ After terminalization or effective cutoff, new renewal dispatch MUST be denied e
 
 Cleanup MUST stop/cancel and await renewal and its owned operations before the one original-provenance release attempt, subject to R1's earliest irreversible cutoff. It MUST NOT race release against unfinished renewal. At cutoff, unresolved renewal tasks and release obligations MUST be strongly retained and reported under R1. Runner exit alone MUST NOT imply cleanup completion. A safely stopped suppressed renewal retains the original handle's release obligation when time remains. No denied/null acquisition creates an obligation, and no second release attempt is authorized.
 
+F4B MUST preserve the accepted F4A/F6 managed Redis closure model. Each outstanding writer/protocol-generation obligation MUST retain its original confirmation evidence independently of the connection's current writer reference. Reconnection, protocol replacement, a writer-less disconnect or confirmation for another generation MUST NOT resolve an older obligation. Only successful normal completion with `None` of the captured original protocol confirmation future establishes closure under the accepted redis-py 8.1.0 integration. Missing, pending, cancelled, exceptional, unsupported or invalid-result confirmation MUST remain unconfirmed. Only confirmed obligations may be compacted.
+
+Managed pool/runtime completion MUST check all retained writer obligations, including those for retired connections; the supervisor MUST retain unconfirmed Redis resources. Already-started establishment/disposal work remains owned until it actually terminates. Observing late confirmation MAY update factual accounting synchronously, but MUST NOT initiate cleanup, another waiter, retry or later disposal stage after cutoff, resurrect a pool, or convert a terminal failed runtime close into success. Waiting on existing confirmation before cutoff remains bounded by the original socket bound and R1 authority. No new duration is introduced. These requirements preserve accepted F4A/F6 behavior; they authorize no disposal redesign.
+
 Guard evidence and diagnostics MUST exclude credentials, raw lease/probe identifiers, Redis keys, command payloads and raw exception contents. Guard decisions require no new tenant/service/route identifiers. Bounded existing categories MAY describe suppression, dependency uncertainty and internal faults. No new metric infrastructure or audit action is introduced.
 
 ## 10. Tested baseline, evidence and dependency gates
@@ -181,6 +191,8 @@ The inspected Compose deployment uses plaintext Redis. R2C established real Redi
 The transport MUST retain redis-py 8.1.0 compatibility evidence. Writer access and associated connection internals are private dependencies. A library upgrade MUST revalidate initialization/authentication, health checks, command packing, actual synchronous writer placement, timed-send scheduling, connection retries, NOSCRIPT, cancellation, uncertain response disposal, pool ownership and closure. Installed and locked versions MUST match the accepted compatibility evidence. No private hook is promised as a stable public API.
 
 Real TLS acceptance is mandatory before enabling guarded `rediss://` deployment. It MUST prove correct TLS connection-class selection, trust/certificate validation, authentication, guarded writer placement, command routing and cleanup. Plaintext evidence MUST NOT be advertised as generic TLS compatibility.
+
+F4B integrated lifecycle acceptance, deployment-platform shutdown certification and guarded TLS acceptance are separate gates. F4B MUST satisfy the lifecycle acceptance boundary linked in section 12; backend-only/prototype evidence counts only for scenarios actually exercised. R1 real-server/platform shutdown acceptance remains a separately tracked release obligation and MUST NOT be represented as completed by F4B source acceptance. Guarded TLS MUST remain disabled until its separate real-TLS gate passes. F4B completion does not certify overall M4 release readiness.
 
 ## 11. Required deterministic acceptance matrix
 
@@ -232,8 +244,14 @@ Production acceptance MUST cover the full matrix. Prototype passes MUST be attri
 
 ## 12. Implementation boundary and review gate
 
-If approved and frozen, this companion authorizes only the minimal backward-compatible guarded renewal interface, isolated Redis adapter/pool, guarded local method and M4 lifecycle integration necessary to enforce these rules. It authorizes no public Normal API exposure, upstream HTTP implementation, request/response streaming, migration, Admin API change, new fallback policy, new lease-timeout value or change to frozen M3/M4 algorithms. R1's numeric deployment duration remains outside this draft.
+The owner approved the six reviewed normative amendments and the [F4B Integration Acceptance Boundary](../05-implementation/Enterprise_AI_API_Gateway_M4_P1C_F4B_Integration_Acceptance_Boundary.md). The independent approval-package review passed with owner approval required. This freeze records that explicit owner decision; it is not inferred from source acceptance.
 
-Independent review MUST establish additive compatibility, outcome exhaustiveness, actual-boundary enforcement and truthful evidence attribution before freezing. Production implementation remains a separate task.
+The F4A/F6 source-acceptance prerequisite was verified against this chat's independent acceptance record at HEAD `bb1c577c581afdf93eb31d5d4058b191f66df680`: `M4-P1C-F4A-F6 SOURCE REVIEW PASS — F4A SOURCE ACCEPTED / F4B READY`. All 32 recorded working-file hashes, including source, tests and eight access logs, still matched before this freeze. The accepted F4A implementation remains uncommitted and MUST be preserved; the HEAD alone is not its source artifact.
+
+Bounded F4B lifecycle integration is authorized only after this contract and its approved acceptance boundary are committed together in the dedicated two-document freeze commit. Until that commit exists, implementation MUST NOT begin. This authorization consumes the accepted guarded backend and permits only the minimal backward-compatible request-lifecycle integration within the approved boundary. Existing legacy renewal APIs and frozen M3/M4 algorithms MUST remain unchanged.
+
+No public Normal API exposure, upstream HTTP implementation, request/response streaming implementation, migration, Admin/OpenAPI change, new retry or fallback policy, lease authority/duration, deadline or cleanup duration is authorized. Existing approved R1 configuration authority remains separate; no value of G is selected or changed. A demonstrated need to expand scope MUST stop work for explicit change control.
+
+The independent F4A source review and approval-package review satisfy the source/contract review prerequisite for this freeze. F4B implementation, deterministic and real-Redis acceptance, and independent F4B source review remain outstanding. Approval and this freeze do not certify platform shutdown, guarded TLS or overall M4 production readiness.
 
 This outcome-model repair preserves M3-R3 atomic renewal and backend clock authority, M3-R7 exact dependency/error classification, M3-R10 original provenance, M4-R8 cadence/horizon/confirmation rules, M4-R9 first-winner precedence, and P1C-R1 absolute deadlines, cleanup ordering and residual ownership. No frozen authority is superseded.
