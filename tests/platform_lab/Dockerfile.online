@@ -1,0 +1,22 @@
+# Local online variant; the existing offline Dockerfile remains unchanged.
+ARG PYTHON_BASE
+FROM ${PYTHON_BASE}
+LABEL org.opencontainers.image.revision="4ff43a92d8b71640a13c3f531599b12597a5d5e6"
+WORKDIR /opt/gateway
+# Official PyPI uv 0.12.10 Linux x86_64 manylinux wheel hash.
+RUN printf '%s\n' 'uv==0.12.10 --hash=sha256:f7d6248ad9f2d282fea795f248da8fa666ab382df50d8385bd98e01049440a0c' > /tmp/uv.txt \
+ && PIP_DEFAULT_TIMEOUT=30 pip install --retries 0 --only-binary=:all: --no-deps --require-hashes -r /tmp/uv.txt
+COPY pyproject.toml uv.lock alembic.ini ./
+COPY app/ ./app/
+COPY tests/ ./tests/
+COPY source.sha256 /tmp/source.sha256
+RUN sha256sum -c /tmp/source.sha256 \
+ && python -c "import sys; assert sys.version_info[:2] == (3,12)" \
+ && uv venv --python /usr/local/bin/python /opt/cert-venv \
+ && uv export --offline --frozen --all-groups --no-emit-project --format requirements-txt --output-file /tmp/locked.txt \
+ && UV_HTTP_TIMEOUT=30 UV_HTTP_RETRIES=0 uv pip sync --python /opt/cert-venv/bin/python --require-hashes --only-binary=:all: /tmp/locked.txt \
+ && uv pip check --python /opt/cert-venv/bin/python
+ENV PATH="/opt/cert-venv/bin:${PATH}" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["python", "-B", "-m", "app.server"]
+CMD ["--host", "0.0.0.0", "--port", "8000"]

@@ -1,0 +1,58 @@
+name: ${M4_CERT_PROJECT:?Set a unique m4-cert project name}
+services:
+  redis:
+    image: redis:7-alpine
+    platform: linux/amd64
+    pull_policy: never
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    volumes: ["redis-data:/data"]
+    networks: [lab]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 1s
+      retries: 15
+  postgres:
+    image: postgres:16
+    platform: linux/amd64
+    pull_policy: never
+    environment:
+      POSTGRES_USER: gateway
+      POSTGRES_PASSWORD: fixture_local_only
+      POSTGRES_DB: gateway
+    volumes: ["pg-data:/var/lib/postgresql/data"]
+    networks: [lab]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "gateway", "-d", "gateway"]
+      interval: 2s
+      timeout: 1s
+      retries: 15
+  gateway:
+    image: gateway-m4-cert:py312
+    platform: linux/amd64
+    pull_policy: never
+    environment:
+      ENVIRONMENT: test
+      LIFECYCLE_GRACE_TIMEOUT_SECONDS: "30"
+      REDIS_URL: redis://redis:6379/0
+      POSTGRES_DSN: postgresql+psycopg_async://gateway:fixture_local_only@postgres:5432/gateway
+      POSTGRES_MIGRATION_DSN: postgresql+psycopg://gateway:fixture_local_only@postgres:5432/gateway
+    depends_on:
+      redis: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+    networks: [lab]
+    ports: ["127.0.0.1::8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready',timeout=2).read()"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    # Docker's watchdog is separate from (and does not extend) process-owned G=30.
+    # A watchdog SIGKILL is forced termination, never a graceful certification PASS.
+    stop_grace_period: 40s
+networks:
+  lab:
+    internal: true
+volumes:
+  redis-data:
+  pg-data:
